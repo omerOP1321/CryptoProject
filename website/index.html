@@ -76,7 +76,7 @@
         <h1>🚀 Crypto AI Prediction Dashboard</h1>
         <div id="setup" class="setup-warning">
             <h3 style="margin-top: 0; color: #ffcc00;">⚠️ Developer Setup Required</h3>
-            <p>Please enter your <strong>https://iphxmjltsigsaocicipu.supabase.co</strong> and <strong>sb_publishable_4clMLjZVc1oacTPOb5XrUA_w9T5aevj</strong> (starting with <code>sb_publishable_</code>) in the <code>index.html</code> source code.</p>
+            <p>Please enter your <strong>Supabase URL</strong> and <strong>Publishable Key</strong> (starting with <code>sb_publishable_</code>) in the <code>index.html</code> source code.</p>
         </div>
         <div id="loading" style="display: none;">Loading live predictions from Supabase...</div>
         <div id="content" style="display: none;">
@@ -111,10 +111,10 @@
         // ==========================================
         // ⚠️ INSERT YOUR SUPABASE DETAILS HERE ⚠️
         // ==========================================
-        const SUPABASE_URL = 'YOUR_SUPABASE_PROJECT_URL';
-        const SUPABASE_PUBLISHABLE_KEY = 'YOUR_SUPABASE_PUBLISHABLE_KEY';
+        const SUPABASE_URL = 'https://iphxmjltsigsaocicipu.supabase.co';
+        const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_4clMLjZVc1oacTPOb5XrUA_w9T5aevj';
 
-        if (SUPABASE_URL !== 'YOUR_SUPABASE_PROJECT_URL') {
+        if (SUPABASE_URL !== 'iphxmjltsigsaocicipu') {
             document.getElementById('setup').style.display = 'none';
             document.getElementById('loading').style.display = 'block';
         }
