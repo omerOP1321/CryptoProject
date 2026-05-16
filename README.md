@@ -62,7 +62,8 @@ Each row in the CSV contains:
 ---
 # 🔮 **Future Sections (Empty for now)**
 
-## 🧹 Data Preprocessing 
+## 🧹 Data Preprocessing
+
 The preprocessing pipeline performs multiple cleaning and preparation steps on historical Binance BTCUSDT 5-minute candle data before feeding it into deep learning models.
 
 ### Preprocessing Steps
@@ -92,6 +93,68 @@ Generated datasets:
 The processed datasets are saved as NumPy arrays for efficient loading during model training.
 
 ---
+
+## ⚙️ Feature Engineering
+
+The project uses a combination of statistical, momentum, volatility, trend, volume, and cyclical time-based features designed for cryptocurrency forecasting.
+
+### Engineered Features
+
+#### 📈 Price & Momentum Features
+- Log Returns (`log_ret`)
+- Lagged Returns
+- RSI (Relative Strength Index)
+- RSI Momentum (`rsi_change`)
+- RSI Acceleration (`rsi_accel`)
+
+#### 📊 Trend Features
+- MACD
+- MACD Slope
+- Moving Average Distance (`ma_dist`)
+- ADX Trend Strength Indicator
+
+#### 📉 Volatility Features
+- Bollinger Band Percentage (`bb_pband`)
+- Bollinger Band Percentage Change (`bb_pband_change`)
+
+#### 📦 Volume Features
+- Log-scaled Volume
+- Volume Z-Score (`volume_z`)
+- Volume Spike Detection (`vol_spike`)
+
+#### 🕒 Time Encoding Features
+To help transformer-based architectures learn periodic market behavior:
+
+- Hour Sine Encoding (`hour_sin`)
+- Hour Cosine Encoding (`hour_cos`)
+
+### Target Generation
+
+The prediction target is based on future Bollinger Band behavior:
+- Future smoothed Bollinger Percentage Band values
+- Multi-step shifted forecasting targets
+
+This allows the model to learn short-term future market movement patterns rather than raw prices directly.
+
+---
+
+## 📊 Dataset Information
+
+- Asset: `BTCUSDT`
+- Timeframe: `5-minute candles`
+- Total Processed Rows: `~909,000`
+- Total Features: `14`
+
+### Final Dataset Shapes
+
+#### LSTM Dataset
+- `X_train`: `(145523, 120, 14)`
+- `X_test`: `(18170, 120, 14)`
+
+The final tensors are optimized for sequence-based deep learning architectures such as:
+- LSTM
+- Transformer
+- Temporal Fusion Transformer (TFT)
 
 ## ⚙️ Feature Engineering (Future)
 * RSI
