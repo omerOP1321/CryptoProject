@@ -62,10 +62,37 @@ Each row in the CSV contains:
 ---
 # 🔮 **Future Sections (Empty for now)**
 
-## 🧹 Data Preprocessing (Future)
+## 🧹 Data Preprocessing 
+The preprocessing pipeline performs multiple cleaning and preparation steps on historical Binance BTCUSDT 5-minute candle data before feeding it into deep learning models.
 
-*(To be added later)*
+### Preprocessing Steps
+
+- Loaded historical OHLCV cryptocurrency data from CSV files
+- Converted timestamps into chronological datetime format
+- Sorted candles by time order
+- Removed duplicate timestamps
+- Forward-filled missing values and removed remaining NaNs
+- Created train / validation / test splits using chronological order
+- Applied feature normalization using `StandardScaler`
+- Generated sliding-window sequences for sequential deep learning models
+
+### Sequence Generation
+
+The model uses fixed-length sliding windows for time-series forecasting:
+
+- Sequence Length: `120`
+- Prediction Horizon: `1 step ahead`
+- Sliding Window Step Size: `5`
+
+Generated datasets:
+- `X_train`, `y_train`
+- `X_val`, `y_val`
+- `X_test`, `y_test`
+
+The processed datasets are saved as NumPy arrays for efficient loading during model training.
+
 ---
+
 ## ⚙️ Feature Engineering (Future)
 * RSI
 * MACD
