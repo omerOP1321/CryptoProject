@@ -339,9 +339,151 @@ Training metadata (symbol, timeframe)
 
 ---
 ## 📉 Live Forecasting Script 
+This project includes a real-time forecasting dashboard that visualizes AI predictions and market data using a web-based interface connected to a backend prediction engine via Supabase.
+
+The forecasting system bridges the trained models (LSTM + Transformer) with a live UI for monitoring predictions in real time.
+
+🔹 System Overview
+
+The forecasting pipeline consists of:
+
+A Python inference engine (Colab / backend) that:
+Loads trained models (.pth files)
+Generates predictions on latest market windows
+Converts normalized outputs back into price estimates
+Sends results to Supabase in structured JSON format
+A web-based dashboard (HTML + JavaScript) that:
+Fetches live prediction payloads from Supabase
+Displays last price, predicted price, and expected change
+Shows model comparison (LSTM vs Transformer)
+Renders historical price + predictions on an interactive chart
+🔹 Backend → Frontend Data Flow
+
+The backend continuously updates a Supabase table:
+
+Table: predictions
+
+Each payload includes:
+
+last_price → current market price
+chosen_model → best performing model at runtime
+predictions:
+LSTM prediction
+Transformer prediction
+change_pct → expected percentage change
+history → price history per timeframe (5m / 1h / 1d)
+pred_history → historical model predictions for chart overlay
+🔹 Frontend Dashboard Features
+
+The dashboard (index.html) provides:
+
+📊 Real-Time Metrics
+Last market price
+AI predicted price
+Expected percentage change
+Trading signal classification:
+LONG (bullish move > +0.1%)
+SHORT (bearish move < -0.1%)
+NEUTRAL (no strong signal)
+📈 Interactive Chart
+
+Built with Chart.js, the visualization includes:
+
+Market price history line
+LSTM prediction history (dashed line)
+Transformer prediction history (dashed line)
+“NEXT” projected price point
+
+Supports multiple resolutions:
+
+5m (high-frequency view)
+1h (medium-term view)
+1d (long-term trend view)
+🔄 Live Updates
+Polls Supabase every 30 seconds
+Automatically updates:
+Metrics panel
+Chart rendering
+Latest prediction snapshot
+Scrollable chart for historical context
+🔹 UI Architecture
+Frontend stack:
+HTML5 + CSS3 (dark trading UI theme)
+Vanilla JavaScript
+Chart.js for visualization
+Supabase JS client for real-time data fetching
+Backend integration:
+Supabase Realtime Database (polling-based)
+Python inference engine pushes updates
+🔹 Key Logic (Simplified Flow)
+Fetch latest prediction payload from Supabase
+Extract:
+Market price
+Model predictions
+Historical series
+Update UI metrics
+Rebuild chart datasets
+Render updated visualization
+Repeat every 30 seconds
+🔹 Signal Logic
+
+Trading signal is derived from predicted percentage change:
+
+change_pct > 0.1% → LONG 🟢
+change_pct < -0.1% → SHORT 🔴
+otherwise → NEUTRAL ⚪
+🔹 Purpose
+
+This script enables:
+
+Live monitoring of AI trading models
+Comparison between LSTM and Transformer forecasts
+Visual validation of model behavior in real market conditions
+Demonstration of end-to-end ML pipeline (training → inference → UI)
 
 ---
 ## 🧪 Backtesting 
+In this project, backtesting is implemented as an evaluation process on historical test data to simulate model performance on unseen market sequences.
+
+The trained models (LSTM and Transformer) are tested on a held-out dataset representing past market data, preserving chronological order.
+
+🔹 Evaluation Process
+The model is evaluated on the test set only
+No shuffling is applied to preserve time order
+Each prediction is generated based on previous sequence windows
+Predictions are compared directly to actual market values
+🔹 Price Reconstruction
+
+Since the model predicts a normalized target (e.g. Bollinger %B), the final price is reconstructed using:
+
+Bollinger Bands (upper and lower bounds)
+Scaling predicted values back into price domain
+
+This allows comparison between:
+
+Actual closing prices
+Predicted reconstructed prices
+🔹 Outputs
+
+The backtesting process produces:
+
+RMSE (Root Mean Squared Error) on test set
+Directional accuracy on significant price movements (when applicable)
+Visual comparison plots:
+Actual vs predicted price
+Candlestick chart with prediction overlay
+Training vs validation loss curves (for model stability analysis)
+🔹 Purpose
+
+This backtesting approach is used to:
+
+Evaluate model performance on unseen historical data
+Validate prediction quality before deployment
+Compare LSTM and Transformer models under identical conditions
+🔹 Key Constraint
+The evaluation strictly uses historical data only
+No future information is used during prediction
+Same preprocessing pipeline is applied as in training
 
 ---
 ## 🛠️ Requirements
@@ -353,4 +495,40 @@ Install with:
 ```bash
 pip install pandas/ requests --no-warn-script-location
 ```
+
+This project is built in Python and relies on deep learning, time-series processing, and technical analysis libraries.
+
+🔹 Core Dependencies
+torch – Deep learning framework for LSTM and Transformer models
+numpy – Numerical computations and array manipulation
+pandas – Data loading and preprocessing of OHLCV data
+scikit-learn – Feature scaling and evaluation metrics (e.g. RMSE)
+matplotlib – Plotting training curves and prediction results
+mplfinance – Candlestick chart visualization
+ta – Technical indicators (e.g. Bollinger Bands)
+🔹 Full Installation Command
+pip install torch ta mplfinance scikit-learn matplotlib pandas numpy
+🔹 Optional Environment Support
+Google Colab (recommended for GPU training)
+Used for model training and evaluation
+Supports Google Drive mounting for saving models and datasets
+🔹 Hardware Requirements
+Minimum:
+Python 3.9+
+8GB RAM
+CPU-only execution possible (slower)
+Recommended:
+NVIDIA GPU (CUDA support)
+Google Colab Pro / local GPU machine for faster training
+🔹 Data Requirements
+
+The project expects preprocessed datasets stored as .npy files:
+
+X_train.npy, y_train.npy
+X_val.npy, y_val.npy
+X_test.npy, y_test.npy
+
+And raw market data:
+
+*_5m_data.csv containing OHLCV candles
 ---
