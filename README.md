@@ -67,7 +67,15 @@ Each row in the CSV contains:
 *(To be added later)*
 ---
 ## ⚙️ Feature Engineering (Future)
-*(To be added later)*
+* RSI
+* MACD
+* Bollinger Bands
+* ADX
+* volume features
+* cyclical time encoding
+* momentum features
+* lagged returns
+* moving average distance
 ---
 ## 🧠 Model Training (Future)
 *(To be added later)*
