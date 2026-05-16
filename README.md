@@ -167,11 +167,95 @@ The final tensors are optimized for sequence-based deep learning architectures s
 * lagged returns
 * moving average distance
 ---
-## 🧠 Model Training (Future)
-*(To be added later)*
+## 🧠 Model Training 
+MODEL TRAINING
+📁 Data Pipeline
+Historical crypto OHLCV data (e.g. BTCUSDT / XRPUSDT)
+Converted into supervised sequences using sliding windows:
+X → past time-series window (samples × sequence × features)
+y → target value (normalized indicator or future proxy)
+Feature scaling is applied using StandardScaler for stable convergence.
+🧠 Models
+🔹 LSTM Model
+
+A sequential neural network designed for time-series forecasting:
+
+Stacked LSTM layers (e.g. 128 hidden units)
+Fully connected regression head
+Dropout regularization
+Outputs single-step prediction
+🔹 TFT (Temporal Fusion Transformer)
+
+A hybrid attention-based architecture:
+
+Variable Selection Network (VSN)
+Dynamically selects important features per timestep
+Positional Encoding
+Injects temporal order information
+Transformer Encoder
+Captures long-range dependencies in price action
+Final output: single regression value per sequence
+⚙️ Training Setup
+Optimizer: AdamW
+Scheduler: ReduceLROnPlateau
+Batch size: 16–64
+Epochs: 25–30
+Regularization: Dropout + Weight decay
+📉 Loss Functions
+LSTM
+Directional Log-Cosh Loss
+Penalizes:
+Prediction error magnitude
+Wrong market direction
+TFT
+Huber Loss
+Robust to noise and outliers in financial time-series
+🧪 Training Behavior
+Models trained on rolling time windows
+Validation loss monitored each epoch
+Best checkpoint saved automatically
+Early stopping used for LSTM (when applicable)
+
 ---
-## 📈 Model Evaluation (Future)
-*(To be added later)*
+## 📈 Model Evaluation 🔍 Prediction Process
+Model outputs normalized regression values (e.g. %B)
+Predictions are mapped back to price space using Bollinger Bands:
+Price = Lower Band + Prediction × (Upper Band - Lower Band)
+📊 Metrics
+RMSE
+
+Measures average prediction error magnitude:
+
+Lower = better fit
+Evaluates regression accuracy
+Directional Accuracy
+
+Evaluates correctness of market direction:
+
+Focuses on significant price movements
+Example result: ~60% accuracy on strong moves
+📈 Visualization
+Candlestick charts (mplfinance)
+Actual price movement
+Predicted trend overlay
+Training curves:
+Train vs Validation loss
+Prediction comparison:
+Actual vs Predicted time series
+⚠️ Key Observations
+LSTM:
+Stable but limited predictive power
+Moderate directional accuracy
+TFT:
+More expressive architecture
+Slightly more stable validation behavior
+Still limited by noisy financial targets
+🚀 Future Improvements
+Predict log-returns instead of %B
+Use trading-based loss (PnL optimization)
+Add attention visualization for TFT
+Convert pipeline into full backtesting engine
+---
 ---
 ## 🔍 Inference / Prediction (Future)
 *(To be added later)*
