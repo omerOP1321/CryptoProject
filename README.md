@@ -51,7 +51,7 @@ The loader applies minimal, safe cleaning:
 * Optional detection of missing candles (printed only)
 Real price spikes are **not removed**, as they represent legitimate market behavior.
 ---
-## 📦 Output (Current)
+## 📦 Output 
 Each row in the CSV contains:
 * `open_time`, `close_time`
 * `open`, `high`, `low`, `close`, `volume`
