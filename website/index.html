@@ -17,11 +17,11 @@
         .signal-long { color: #00ff00; }
         .signal-short { color: #ff4444; }
         .signal-neutral { color: #aaaaaa; }
-        
+
         /* Scrollable Chart Styles */
         .chart-wrapper { width: 100%; overflow-x: auto; background-color: #1a1a1a; border-radius: 8px; padding: 10px; border: 1px solid #333; }
         .chart-area { min-width: 2000px; height: 500px; position: relative; }
-        
+
         .controls { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; }
         .btn { background: #333; border: 1px solid #4A90E2; color: white; padding: 8px 16px; border-radius: 4px; cursor: pointer; transition: 0.3s; }
         .btn:hover { background: #4A90E2; }
@@ -109,7 +109,7 @@
                 currentResolution = res;
                 document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
                 if (btn) btn.classList.add('active');
-                
+
                 // Adjust chart width for daily (less points) vs 5m (many points)
                 const parent = document.getElementById('chart-parent');
                 if (res === '1d') parent.style.minWidth = '1200px';
@@ -149,12 +149,12 @@
             function updateChart() {
                 const ctx = document.getElementById('predictionChart').getContext('2d');
                 const history = globalPayload.history ? globalPayload.history[currentResolution] : [];
-                
+
                 const labels = history.map(h => h.t);
                 const dataPoints = history.map(h => h.p);
-                
+
                 labels.push("NEXT");
-                
+
                 const datasets = [
                     {
                         label: 'Market Price',
@@ -171,16 +171,16 @@
                     const timeKey = currentResolution === '5m' ? 't_5m' : (currentResolution === '1h' ? 't_1h' : 't_1d');
                     const lstmLine = new Array(labels.length).fill(null);
                     const tftLine = new Array(labels.length).fill(null);
-                    
+
                     globalPayload.pred_history.forEach((pred, index) => {
                         let labelIdx = labels.indexOf(pred[timeKey]);
-                        
+
                         // The latest prediction applies to the future "NEXT" label
                         if (index === globalPayload.pred_history.length - 1) {
                             labelIdx = labels.length - 1;
                             labels[labelIdx] = `NEXT (${pred[timeKey]})`;
                         }
-                        
+
                         if (labelIdx !== -1) {
                             if (pred.LSTM) lstmLine[labelIdx] = pred.LSTM;
                             if (pred.Transformer) tftLine[labelIdx] = pred.Transformer;
@@ -208,7 +208,7 @@
                         }
                     }
                 });
-                
+
                 // Scroll to the end automatically
                 const container = document.getElementById('scroll-container');
                 container.scrollLeft = container.scrollWidth;
