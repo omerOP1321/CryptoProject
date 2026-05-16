@@ -4,7 +4,7 @@ The main objective of this project is to build a full machine-learning pipeline 
 The project begins with a reliable data-collection layer from the Binance API, and will include preprocessing, feature engineering (technical indicators), 
 model training (LSTM/Random Forest Regressor,XGBoost Regressor),evaluation, and a live forecasting module.
 ---
-## 📌 Features (Current)
+## 📌 Features 
 * Fetches historical candlestick (kline) data from Binance.
 * Supports configurable symbol and interval (e.g., `BTCUSDT`, `5m`).
 * Handles Binance API rate limits with retries.
@@ -14,7 +14,7 @@ model training (LSTM/Random Forest Regressor,XGBoost Regressor),evaluation, and 
 * Removes overlapping candles (duplicate timestamps).
 * Saves final data as a CSV inside the `data/` directory.
 ---
-## 📁 Project Structure (Current & Future)
+## 📁 Project Structure 
 ```
 project/
 │
@@ -60,8 +60,6 @@ Each row in the CSV contains:
 * `taker_buy_base_asset_volume`
 * `taker_buy_quote_asset_volume`
 ---
-# 🔮 **Future Sections (Empty for now)**
-
 ## 🧹 Data Preprocessing
 
 The preprocessing pipeline performs multiple cleaning and preparation steps on historical Binance BTCUSDT 5-minute candle data before feeding it into deep learning models.
@@ -93,7 +91,6 @@ Generated datasets:
 The processed datasets are saved as NumPy arrays for efficient loading during model training.
 
 ---
-
 ## ⚙️ Feature Engineering
 
 The project uses a combination of statistical, momentum, volatility, trend, volume, and cyclical time-based features designed for cryptocurrency forecasting.
@@ -137,7 +134,6 @@ The prediction target is based on future Bollinger Band behavior:
 This allows the model to learn short-term future market movement patterns rather than raw prices directly.
 
 ---
-
 ## 📊 Dataset Information
 
 - Asset: `BTCUSDT`
@@ -166,6 +162,7 @@ The final tensors are optimized for sequence-based deep learning architectures s
 * momentum features
 * lagged returns
 * moving average distance
+  
 ---
 ## 🧠 Model Training 
 MODEL TRAINING
@@ -255,19 +252,97 @@ Predict log-returns instead of %B
 Use trading-based loss (PnL optimization)
 Add attention visualization for TFT
 Convert pipeline into full backtesting engine
----
+
 ---
 ## 🔍 Inference / Prediction (Future)
-*(To be added later)*
+After training, the model is used to generate predictions on unseen test data.
+
+The inference pipeline includes:
+
+Loading the best saved model checkpoint
+Switching the model to evaluation mode (model.eval())
+Running forward passes without gradient computation (torch.no_grad())
+📤 Prediction Flow
+LSTM / TFT Output
+The model outputs a continuous normalized value
+Example: Bollinger %B (0 → 1 range)
+Reconstruction to Price Space
+
+Predictions are converted back into actual price values using Bollinger Bands:
+
+Predicted Price = Lower Band + Prediction × (Upper Band - Lower Band)
+
+This allows direct comparison with real market prices.
+
+⚡ Batch Inference
+Predictions are generated in batches to improve efficiency
+Processed sequentially over the test dataset
+Final output is a full time-series prediction aligned with timestamps
+📊 Output Usage
+
+The predictions are used for:
+
+Price comparison plots (Actual vs Predicted)
+Trading signal analysis
+Directional accuracy evaluation
+Strategy backtesting (optional extension)
+
 ---
-## 💾 Model Saving & Loading (Future)
-*(To be added later)*
+## 💾 Model Saving & Loading 
+Model Saving
+
+During training, the best-performing model is automatically saved based on validation loss.
+
+Saving Logic:
+The model is saved whenever validation loss improves
+Only the best checkpoint is kept
+File Format:
+.pth (PyTorch state_dict)
+Example:
+LSTM:
+best_lstm_model_XRPUSDT.pth
+TFT:
+best_tft_vsn_BTCUSDT.pth
+📦 What is Saved
+
+Only the model weights (state_dict) are stored:
+
+Model parameters
+Learned weights and biases
+
+Not saved:
+
+Optimizer state (unless extended)
+Training history
+Scalers (must be handled separately if needed)
+📥 Model Loading
+Steps:
+Recreate model architecture
+Load saved weights
+Switch to evaluation mode
+Example:
+model = TFTModel(...)
+model.load_state_dict(torch.load(model_path))
+model.eval()
+⚠️ Important Notes
+Architecture must be identical to training time
+Model must be on same device (CPU/GPU) or moved accordingly
+Missing scaler or preprocessing logic can break inference consistency
+🚀 Best Practice (Recommended Upgrade)
+
+To make inference fully production-ready, also save:
+
+Feature scaler (StandardScaler)
+Feature configuration
+Sequence length
+Training metadata (symbol, timeframe)
+
 ---
-## 📉 Live Forecasting Script (Future)
-*(To be added later)*
+## 📉 Live Forecasting Script 
+
 ---
-## 🧪 Backtesting (Future)
-*(To be added later)*
+## 🧪 Backtesting 
+
 ---
 ## 🛠️ Requirements
 ```
