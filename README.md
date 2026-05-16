@@ -30,7 +30,7 @@ project/
 └── README.md
 ```
 ---
-## 📊 Data Collection (Current)
+## 📊 Data Collection 
 Example usage:
 ```python
 from data_loader import BinanceDataLoader
@@ -43,7 +43,7 @@ The script will download all kline data from the specified start date until now 
 data/BTCUSDT_5m_data.csv
 ```
 ---
-## 🧼 Data Cleaning (Current)
+## 🧼 Data Cleaning 
 The loader applies minimal, safe cleaning:
 * Duplicate candle removal (overlaps returned by Binance)
 * Sorting candles by time
@@ -254,7 +254,7 @@ Add attention visualization for TFT
 Convert pipeline into full backtesting engine
 
 ---
-## 🔍 Inference / Prediction (Future)
+## 🔍 Inference / Prediction
 After training, the model is used to generate predictions on unseen test data.
 
 The inference pipeline includes:
