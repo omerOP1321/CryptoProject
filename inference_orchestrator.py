@@ -1,0 +1,505 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
+import os
+import json
+from getpass import getpass
+
+# --- Supabase & Drive Setup ---
+try:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    BASE_DIR = '/content/drive/MyDrive/CryptoProject'
+except ImportError:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+
+os.makedirs(BASE_DIR, exist_ok=True)
+CREDS_FILE = os.path.join(BASE_DIR, 'supabase_creds.json')
+
+if not os.path.exists(CREDS_FILE):
+    print("Supabase credentials not found. Let's set them up.")
+    print("Get these from Supabase Dashboard -> Project Settings -> API")
+    url = input("Enter Supabase Project URL: ").strip()
+    key = getpass("Enter Supabase SERVICE_ROLE Key (for Python backend): ").strip()
+    with open(CREDS_FILE, 'w') as f:
+        json.dump({'url': url, 'key': key}, f)
+    print(f"\n✅ Saved credentials to {CREDS_FILE}. Your colleagues can run this and enter their own keys without changing the code!")
+else:
+    print(f"✅ Supabase credentials found at {CREDS_FILE}")
+
+# Install requirements
+get_ipython().run_line_magic('pip', 'install ta supabase')
+
+
+# In[2]:
+
+
+import os
+import sys
+import time
+import json
+import requests
+import signal
+import warnings
+from supabase import create_client, Client
+import pandas as pd
+import numpy as np
+import torch
+import torch.nn as nn
+import ta
+import math
+from datetime import datetime
+from sklearn.preprocessing import StandardScaler
+from statsmodels.tsa.arima.model import ARIMA
+
+# --- 1. Cloud & Path Configuration ---
+try:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    DRIVE_BASE_DIR = '/content/drive/MyDrive/CryptoProject'
+    print("✅ Running in Google Colab (Drive Mounted).")
+except ImportError:
+    try:
+        DRIVE_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        DRIVE_BASE_DIR = os.getcwd()
+    print("✅ Running locally (No Colab detected).")
+
+# GPU Configuration
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"✅ Utilizing Compute Device: {DEVICE}")
+
+# File Paths
+MODEL_DIR = os.path.join(DRIVE_BASE_DIR, 'models')
+DATA_DIR = os.path.join(DRIVE_BASE_DIR, 'data')
+
+# Supabase Configuration
+CREDS_FILE = os.path.join(DRIVE_BASE_DIR, 'supabase_creds.json')
+os.makedirs(DATA_DIR, exist_ok=True)
+
+if os.path.exists(CREDS_FILE):
+    with open(CREDS_FILE, 'r') as f:
+        creds = json.load(f)
+    supabase: Client = create_client(creds['url'], creds['key'])
+else:
+    print(f"⚠️ WARNING: {CREDS_FILE} not found. Will not push to database.")
+    supabase = None
+
+# --- Constants ---
+COINS = [
+    ('BTCUSDT', 1),
+    ('ETHUSDT', 2),
+    ('XRPUSDT', 3)
+]
+INTERVAL = '5m'
+SEQ_LENGTH = 120
+BASE_URL = "https://api.binance.com/api/v3/klines"
+
+# --- 2. Model Architectures ---
+
+class LSTMModel(nn.Module):
+    def __init__(self, input_size, hidden_size=128, num_layers=2, dropout=0.1):
+        super(LSTMModel, self).__init__()
+        self.hidden_dim = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout)
+        self.fc = nn.Linear(hidden_size, 1)
+
+    def forward(self, x):
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device)
+        out, _ = self.lstm(x, (h0, c0))
+        out = self.fc(out[:, -1, :])
+        return out
+
+class GLU(nn.Module):
+    def __init__(self, input_size):
+        super().__init__()
+        self.fc = nn.Linear(input_size, input_size * 2)
+        self.sigmoid = nn.Sigmoid()
+    def forward(self, x):
+        x = self.fc(x)
+        content, gate = torch.chunk(x, 2, dim=-1)
+        return content * self.sigmoid(gate)
+
+class GRN(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size=None, dropout=0.1):
+        super().__init__()
+        output_size = output_size or input_size
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, output_size)
+        self.glu = GLU(output_size)
+        self.layer_norm = nn.LayerNorm(output_size)
+        self.dropout = nn.Dropout(dropout)
+        self.skip = nn.Linear(input_size, output_size) if input_size != output_size else nn.Identity()
+    def forward(self, x):
+        residual = self.skip(x)
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        x = self.dropout(x)
+        x = self.glu(x)
+        return self.layer_norm(residual + x)
+
+class VariableSelectionNetwork(nn.Module):
+    def __init__(self, input_dim, num_vars, d_model, dropout=0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.num_vars = num_vars
+        self.grns = nn.ModuleList([GRN(input_dim // num_vars, d_model, d_model, dropout) for _ in range(num_vars)])
+        self.selector_grn = GRN(input_dim, d_model, num_vars, dropout)
+        self.softmax = nn.Softmax(dim=-1)
+    def forward(self, x):
+        weights = self.softmax(self.selector_grn(x))
+        var_outputs = []
+        chunk_size = x.shape[-1] // self.num_vars
+        for i in range(self.num_vars):
+            var_x = x[..., i*chunk_size : (i+1)*chunk_size]
+            var_outputs.append(self.grns[i](var_x))
+        var_outputs = torch.stack(var_outputs, dim=-1)
+        selected_output = torch.sum(var_outputs * weights.unsqueeze(-2), dim=-1)
+        return selected_output
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe.unsqueeze(0))
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1), : ]
+
+class TFTModel(nn.Module):
+    def __init__(self, input_dim, num_vars, d_model=64, nhead=4, num_layers=2, dropout=0.1):
+        super().__init__()
+        self.vsn = VariableSelectionNetwork(input_dim, num_vars, d_model, dropout)
+        self.pos_encoder = PositionalEncoding(d_model)
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, d_model*4, dropout, batch_first=True)
+        self.transformer = nn.TransformerEncoder(encoder_layers, num_layers)
+        self.fc = nn.Linear(d_model, 1)
+    def forward(self, x):
+        x = self.vsn(x)
+        x = self.pos_encoder(x)
+        x = self.transformer(x)
+        return self.fc(x[:, -1, :])
+
+
+# --- 3. Global State ---
+df_hist_dict = {}
+scalers_dict = {}
+model_lstm = None
+model_tft = None
+
+# LSTM expects 9 features
+LSTM_FEATURES = [
+    'log_ret', 'rsi', 'rsi_change', 'rsi_accel', 'macd', 'macd_slope',
+    'bb_pband_change', 'volume', 'ma_dist'
+]
+
+# Transformer expects all 14 features
+TFT_FEATURES = [
+    'log_ret', 'rsi', 'rsi_change', 'rsi_accel', 'macd', 'macd_slope',
+    'bb_pband_change', 'volume', 'ma_dist', 'volume_z', 'vol_spike', 'adx',
+    'hour_sin', 'hour_cos'
+]
+
+# --- 4. Core Functions ---
+
+def fetch_latest_data(symbol, interval=INTERVAL, limit=1000):
+    params = {'symbol': symbol, 'interval': interval, 'limit': limit}
+    response = requests.get(BASE_URL, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        cols = ['open_time', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_asset_volume', 'number_of_trades',
+                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore']
+        df = pd.DataFrame(data, columns=cols)
+        numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+        df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric)
+        df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+        return df
+    else:
+        raise Exception(f"Failed to fetch data from Binance: {response.text}")
+
+def calculate_features(df):
+    df = df.copy()
+    df['log_ret'] = np.log(df['close'] / df['close'].shift(1))
+
+    df['rsi'] = ta.momentum.rsi(df['close'], window=14) / 100.0
+    df['rsi_change'] = df['rsi'].diff(periods=3)
+    df['rsi_accel'] = df['rsi_change'].diff(periods=2)
+
+    macd = ta.trend.MACD(df['close'])
+    macd_raw = macd.macd_diff()
+    df['macd'] = (macd_raw - macd_raw.rolling(window=100).mean()) / (macd_raw.rolling(window=100).std() + 1e-9)
+    df['macd_diff'] = macd.macd_diff()
+    df['macd_slope'] = df['macd_diff'].diff(periods=2)
+
+    bb = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2)
+    df['bb_pband'] = bb.bollinger_pband()
+    df['bb_pband_change'] = df['bb_pband'].diff(periods=1)
+    df['bb_hband'] = bb.bollinger_hband()
+    df['bb_lband'] = bb.bollinger_lband()
+
+    df['volume_raw'] = df['volume']
+    df['volume'] = np.log(df['volume'] + 1)
+    df['volume'] = (df['volume'] - df['volume'].mean()) / (df['volume'].std() + 1e-9)
+
+    df['vol_ma'] = df['volume'].rolling(window=20).mean()
+    df['vol_std'] = df['volume'].rolling(window=20).std()
+    df['volume_z'] = (df['volume'] - df['vol_ma']) / (df['vol_std'] + 1e-9)
+    df['vol_spike'] = (df['volume'] > (df['vol_ma'] * 2)).astype(float)
+
+    df['ma_20'] = df['close'].rolling(window=20).mean()
+    df['ma_dist'] = (df['close'] - df['ma_20']) / (df['ma_20'] + 1e-9) * 10.0
+
+    adx = ta.trend.ADXIndicator(df['high'], df['low'], df['close'], window=14)
+    df['adx'] = adx.adx()
+
+    df['hour'] = df['open_time'].dt.hour
+    df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
+    df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
+
+    return df.dropna()
+
+def infer_arima(close_series):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            model = ARIMA(close_series, order=(2, 1, 0))
+            model_fit = model.fit()
+            forecast = model_fit.forecast(steps=3)
+            return float(forecast.iloc[-1])
+        except Exception as e:
+            print(f"   -> ARIMA fitting failed: {e}")
+            return float(close_series.iloc[-1])
+
+def initialize():
+    global df_hist_dict, scalers_dict, model_lstm, model_tft
+
+    print("\n[Init] Loading models into memory & moving to GPU...")
+    lstm_path = os.path.join(MODEL_DIR, 'best_lstm_model.pth')
+    if os.path.exists(lstm_path):
+        model_lstm = LSTMModel(input_size=len(LSTM_FEATURES))
+        model_lstm.load_state_dict(torch.load(lstm_path, map_location=DEVICE))
+        model_lstm.to(DEVICE)
+        model_lstm.eval()
+        print(f"   -> LSTM loaded on {DEVICE}.")
+
+    tft_path = os.path.join(MODEL_DIR, 'best_tft_vsn.pth')
+    if os.path.exists(tft_path):
+        model_tft = TFTModel(input_dim=len(TFT_FEATURES), num_vars=len(TFT_FEATURES))
+        model_tft.load_state_dict(torch.load(tft_path, map_location=DEVICE))
+        model_tft.to(DEVICE)
+        model_tft.eval()
+        print(f"   -> Transformer loaded on {DEVICE}.")
+
+    for symbol, db_id in COINS:
+        csv_path = os.path.join(DATA_DIR, f'{symbol}_5m_data.csv')
+        print(f"\n[Init] Loading historical data for {symbol} ({csv_path})...")
+        if os.path.exists(csv_path):
+            df_hist = pd.read_csv(csv_path)
+            df_hist['open_time'] = pd.to_datetime(df_hist['open_time'])
+            df_hist_dict[symbol] = df_hist
+            print(f"   -> Loaded {len(df_hist)} historical rows.")
+
+            print(f"   -> Fitting scalers for {symbol}... (this takes a moment)")
+            df_full_feat = calculate_features(df_hist)
+            train_end = int(len(df_full_feat) * 0.8)
+            df_train = df_full_feat.iloc[:train_end]
+
+            lstm_scaler = StandardScaler()
+            tft_scaler = StandardScaler()
+            lstm_scaler.fit(df_train[LSTM_FEATURES])
+            tft_scaler.fit(df_train[TFT_FEATURES])
+            scalers_dict[symbol] = (lstm_scaler, tft_scaler)
+            print("      -> Scalers fitted.")
+        else:
+            print(f"   -> ⚠️ No historical data found for {symbol}! Will initialize from live fetch.")
+            df_hist_dict[symbol] = pd.DataFrame()
+
+def save_data_to_drive():
+    for symbol, df_hist in df_hist_dict.items():
+        if df_hist is not None and not df_hist.empty:
+            csv_path = os.path.join(DATA_DIR, f'{symbol}_5m_data.csv')
+            print(f"🛑 [Session End] Saving updated historical data for {symbol}...")
+            df_hist.to_csv(csv_path, index=False)
+            print(f"✅ Save complete! {len(df_hist)} rows written to {csv_path}.")
+
+def push_to_supabase(results, db_id):
+    if not supabase:
+        return
+    print(f"   -> 🌐 Pushing updates to Supabase (id: {db_id})...")
+    try:
+        supabase.table('predictions').upsert({"id": db_id, "payload": results}).execute()
+        print("   -> ✅ Successfully pushed to Supabase!")
+    except Exception as e:
+        print(f"   -> ❌ Supabase push failed: {e}")
+
+def signal_handler(sig, frame):
+    save_data_to_drive()
+    sys.exit(0)
+
+# Register Graceful Shutdown
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# --- 5. Main Loop ---
+
+def run_inference(symbol, db_id):
+    global df_hist_dict
+    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching latest data for {symbol}...")
+
+    df_hist = df_hist_dict[symbol]
+    # 1. Fetch & Append Data
+    df_new = fetch_latest_data(symbol)
+    if df_hist.empty:
+        df_hist = df_new
+    else:
+        df_hist = pd.concat([df_hist, df_new]).drop_duplicates(subset=['open_time'], keep='last').sort_values('open_time')
+
+    df_hist_dict[symbol] = df_hist
+
+    # 2. Calculate Features
+    df_recent = df_hist.tail(1500).copy()
+    df_features = calculate_features(df_recent)
+
+    if len(df_features) < SEQ_LENGTH:
+        print("   -> ⏳ Not enough data for inference yet.")
+        return
+
+    last_price = float(df_features['close'].iloc[-1])
+    results = {
+        "timestamp": str(df_features['open_time'].iloc[-1]),
+        "last_price": last_price,
+        "predictions": {}
+    }
+
+    l_band = df_features['bb_lband'].iloc[-1]
+    h_band = df_features['bb_hband'].iloc[-1]
+
+    # Load cached scalers
+    lstm_scaler, tft_scaler = scalers_dict.get(symbol, (None, None))
+    if lstm_scaler is None:
+        print("   -> ⚠️ Scalers not fitted. Fitting on the fly on available history...")
+        lstm_scaler = StandardScaler()
+        tft_scaler = StandardScaler()
+        lstm_scaler.fit(df_features[LSTM_FEATURES])
+        tft_scaler.fit(df_features[TFT_FEATURES])
+        scalers_dict[symbol] = (lstm_scaler, tft_scaler)
+
+    # 4. Infer LSTM (Expects 9 features)
+    if model_lstm:
+        seq_lstm = df_features[LSTM_FEATURES].tail(SEQ_LENGTH).values
+        input_lstm = torch.tensor(lstm_scaler.transform(seq_lstm), dtype=torch.float32).unsqueeze(0).to(DEVICE)
+        with torch.no_grad():
+            pred_log_ret = model_lstm(input_lstm).item()
+
+        pred_price_lstm = last_price * math.exp(pred_log_ret)
+        results["predictions"]["LSTM"] = {
+            "val": pred_log_ret,
+            "price": pred_price_lstm,
+            "change_pct": (pred_price_lstm - last_price) / last_price * 100
+        }
+
+    # 5. Infer Transformer (Expects 14 features)
+    if model_tft:
+        seq_tft = df_features[TFT_FEATURES].tail(SEQ_LENGTH).values
+        input_tft = torch.tensor(tft_scaler.transform(seq_tft), dtype=torch.float32).unsqueeze(0).to(DEVICE)
+        with torch.no_grad():
+            pred_bb = model_tft(input_tft).item()
+
+        pred_price_tft = l_band + (pred_bb * (h_band - l_band))
+        results["predictions"]["Transformer"] = {
+            "val": pred_bb,
+            "price": pred_price_tft,
+            "change_pct": (pred_price_tft - last_price) / last_price * 100
+        }
+
+    # 6. Infer ARIMA (Runs on Close series directly)
+    pred_price_arima = infer_arima(df_features['close'].tail(SEQ_LENGTH))
+    change_pct_arima = (pred_price_arima - last_price) / last_price * 100
+    results["predictions"]["ARIMA"] = {
+        "val": pred_price_arima,
+        "price": pred_price_arima,
+        "change_pct": change_pct_arima
+    }
+
+    # 7. Decide Consensus (Select model with largest absolute change_pct)
+    max_pct = -1.0
+    chosen = "None"
+    for name, p_data in results["predictions"].items():
+        abs_change = abs(p_data["change_pct"])
+        if abs_change > max_pct:
+            max_pct = abs_change
+            chosen = name
+    results["chosen_model"] = chosen
+
+    # 8. Add History Aggregation (OHLC format for Candlestick charts with UNIX timestamp in seconds)
+    try:
+        # 5m: Last 500 candles
+        h5 = df_hist.tail(500)[['open_time', 'open', 'high', 'low', 'close']].copy()
+        h5['time'] = h5['open_time'].astype('datetime64[s]').astype(np.int64)
+        hist_5m = h5[['time', 'open', 'high', 'low', 'close']].rename(
+            columns={'open':'o', 'high':'h', 'low':'l', 'close':'c'}
+        ).to_dict('records')
+
+        # 1h: Last 30 days resampled
+        df_res_1h = df_hist.set_index('open_time').resample('1h').agg({
+            'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'
+        }).dropna().reset_index()
+        h1h = df_res_1h.tail(720).copy()
+        h1h['time'] = h1h['open_time'].astype('datetime64[s]').astype(np.int64)
+        hist_1h = h1h[['time', 'open', 'high', 'low', 'close']].rename(
+            columns={'open':'o', 'high':'h', 'low':'l', 'close':'c'}
+        ).to_dict('records')
+
+        # 1d: Full history resampled (Format 'YYYY-MM-DD' for TradingView)
+        df_res_1d = df_hist.set_index('open_time').resample('1d').agg({
+            'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'
+        }).dropna().reset_index()
+        h1d = df_res_1d.copy()
+        h1d['time'] = h1d['open_time'].dt.strftime('%Y-%m-%d')
+        hist_1d = h1d[['time', 'open', 'high', 'low', 'close']].rename(
+            columns={'open':'o', 'high':'h', 'low':'l', 'close':'c'}
+        ).to_dict('records')
+
+        results['history'] = {
+            "5m": hist_5m,
+            "1h": hist_1h,
+            "1d": hist_1d
+        }
+    except Exception as e:
+        print(f"   -> History aggregation failed: {e}")
+
+    # 9. Push to Supabase
+    push_to_supabase(results, db_id)
+
+    if results["chosen_model"] != "None":
+        best = results['predictions'][results['chosen_model']]
+        print(f"   -> AI Prediction [{results['chosen_model']}]: ${best['price']:.2f} ({best['change_pct']:+.2f}%)")
+
+if __name__ == "__main__":
+    print("========================================")
+    print("   🚀 Crypto AI Prediction Cloud Engine 🚀")
+    print("========================================")
+    print("Press Ctrl+C to stop the engine and save data safely to Drive.")
+
+    initialize()
+
+    while True:
+        for symbol, db_id in COINS:
+            try:
+                run_inference(symbol, db_id)
+            except Exception as e:
+                print(f"⚠️ Error during inference for {symbol}: {e}")
+            time.sleep(5)  # Sleep between coins to prevent API throttling
+
+        print("\n   -> Sleeping for 5 minutes...\n")
+        time.sleep(300)
+

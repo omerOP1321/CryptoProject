@@ -486,7 +486,7 @@
                 });
 
                 // Add Candlestick Series
-                candlestickSeries = chartInstance.addCandlestickSeries({
+                candlestickSeries = chartInstance.addSeries(LightweightCharts.CandlestickSeries, {
                     upColor: '#00e676',
                     downColor: '#ff3d71',
                     borderDownColor: '#ff3d71',
@@ -536,7 +536,7 @@
                     const color = MODEL_COLORS[modelName];
 
                     // Create line series for the prediction path
-                    const lineSeries = chartInstance.addLineSeries({
+                    const lineSeries = chartInstance.addSeries(LightweightCharts.LineSeries, {
                         color: color,
                         lineWidth: 2,
                         lineStyle: LightweightCharts.LineStyle.Dashed,
