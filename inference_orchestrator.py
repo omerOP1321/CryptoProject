@@ -538,18 +538,19 @@ def initialize():
             try:
                 state_dict = torch.load(lstm_path, map_location=DEVICE)
                 input_size = state_dict['lstm.weight_ih_l0'].shape[1]
-                print(f"   -> Detected LSTM checkpoint for {symbol} (path: {os.path.basename(lstm_path)}) input size: {input_size} features.")
+                hidden_size = state_dict['lstm.weight_hh_l0'].shape[1]
+                print(f"   -> Detected LSTM checkpoint for {symbol} (path: {os.path.basename(lstm_path)}) input size: {input_size} features, hidden size: {hidden_size}.")
                 
                 # Check architecture based on state_dict keys
                 if 'attention.attention.weight' in state_dict:
                     print(f"      -> Instantiating LSTMModel_ETH (Attention + MLP) for {symbol}")
-                    model_lstm = LSTMModel_ETH(input_size=input_size)
+                    model_lstm = LSTMModel_ETH(input_size=input_size, hidden_size=hidden_size)
                 elif 'norm.weight' in state_dict:
                     print(f"      -> Instantiating LSTMModel_XRP (LayerNorm + MLP) for {symbol}")
-                    model_lstm = LSTMModel_XRP(input_size=input_size)
+                    model_lstm = LSTMModel_XRP(input_size=input_size, hidden_size=hidden_size)
                 else:
                     print(f"      -> Instantiating standard LSTMModel for {symbol}")
-                    model_lstm = LSTMModel(input_size=input_size)
+                    model_lstm = LSTMModel(input_size=input_size, hidden_size=hidden_size)
 
                 model_lstm.load_state_dict(state_dict)
                 model_lstm.to(DEVICE)
