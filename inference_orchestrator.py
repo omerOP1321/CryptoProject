@@ -70,36 +70,17 @@ except ImportError:
     pass
 
 # --- 1. Cloud & Path Configuration ---
-import pathlib
-
 try:
     from google.colab import drive
     drive.mount('/content/drive')
     DRIVE_BASE_DIR = '/content/drive/MyDrive/CryptoProject'
     print("✅ Running in Google Colab (Drive Mounted).")
 except ImportError:
-    home = pathlib.Path.home()
-    possible_drive_paths = [
-        home / 'Google Drive' / 'My Drive' / 'CryptoProject',
-        home / 'My Drive' / 'CryptoProject',
-        pathlib.Path('G:/My Drive/CryptoProject'),
-        pathlib.Path('G:/MyDrive/CryptoProject'),
-        home / 'Google Drive' / 'MyDrive' / 'CryptoProject',
-    ]
-
-    DRIVE_BASE_DIR = None
-    for p in possible_drive_paths:
-        if p.exists():
-            DRIVE_BASE_DIR = str(p)
-            print(f"✅ Google Drive Desktop found! Base directory: {DRIVE_BASE_DIR}")
-            break
-
-    if DRIVE_BASE_DIR is None:
-        try:
-            DRIVE_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        except NameError:
-            DRIVE_BASE_DIR = os.getcwd()
-        print(f"✅ Running locally (No Colab/Drive Desktop detected). Base directory: {DRIVE_BASE_DIR}")
+    try:
+        DRIVE_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        DRIVE_BASE_DIR = os.getcwd()
+    print(f"✅ Running locally. Base directory: {DRIVE_BASE_DIR}")
 
 # GPU Configuration
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
