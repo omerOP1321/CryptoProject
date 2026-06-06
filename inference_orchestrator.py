@@ -657,8 +657,8 @@ def push_to_supabase(results, db_id):
         return
     print(f"   -> 🌐 Pushing updates to Supabase (id: {db_id})...")
     try:
-        supabase.table('predictions').upsert({"id": db_id, "payload": results}).execute()
-        print("   -> ✅ Successfully pushed to Supabase!")
+        response = supabase.table('predictions').upsert({"id": db_id, "payload": results}).execute()
+        print(f"   -> ✅ Successfully pushed to Supabase! Response data: {response.data}")
     except Exception as e:
         print(f"   -> ❌ Supabase push failed: {e}")
 
