@@ -3,68 +3,334 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto AI Predictions</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>Crypto AI Predictions Dashboard</title>
+    <!-- TradingView Lightweight Charts standalone production CDN -->
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #e0e0e0; display: flex; flex-direction: column; align-items: center; padding: 20px; }
-        .container { width: 95%; max-width: 1200px; background-color: #1e1e1e; padding: 20px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-        h1 { color: #4A90E2; margin-bottom: 10px; }
-        .metrics { display: flex; justify-content: space-around; margin-bottom: 20px; padding: 15px; background-color: #252525; border-radius: 8px; flex-wrap: wrap; gap: 10px; }
-        .metric { text-align: center; min-width: 150px; }
-        .metric small { color: #888; font-size: 0.9em; }
-        .metric b { display: block; font-size: 1.4em; margin-top: 5px; }
-        .signal-long { color: #00ff00; }
-        .signal-short { color: #ff4444; }
-        .signal-neutral { color: #aaaaaa; }
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
+        
+        :root {
+            --bg-base: #0a0b0d;
+            --bg-surface: #12141a;
+            --bg-card: rgba(22, 26, 37, 0.7);
+            --primary: #4e82ee;
+            --primary-glow: rgba(78, 130, 238, 0.35);
+            --green: #00e676;
+            --red: #ff3d71;
+            --text-main: #f5f6f9;
+            --text-muted: #848e9c;
+            --border-color: rgba(43, 49, 67, 0.6);
+        }
 
-        /* Scrollable Chart Styles */
-        .chart-wrapper { width: 100%; overflow-x: auto; background-color: #1a1a1a; border-radius: 8px; padding: 10px; border: 1px solid #333; }
-        .chart-area { min-width: 2000px; height: 500px; position: relative; }
+        body { 
+            font-family: 'Outfit', sans-serif; 
+            background-color: var(--bg-base); 
+            color: var(--text-main); 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            padding: 20px; 
+            margin: 0;
+            min-height: 100vh;
+        }
 
-        .controls { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; }
-        .btn { background: #333; border: 1px solid #4A90E2; color: white; padding: 8px 16px; border-radius: 4px; cursor: pointer; transition: 0.3s; }
-        .btn:hover { background: #4A90E2; }
-        .btn.active { background: #4A90E2; box-shadow: 0 0 10px #4A90E2; }
+        .container { 
+            width: 95%; 
+            max-width: 1280px; 
+            background-color: var(--bg-surface); 
+            padding: 25px; 
+            border-radius: 20px; 
+            box-shadow: 0 12px 40px rgba(0,0,0,0.6); 
+            border: 1px solid var(--border-color);
+            margin-top: 10px;
+        }
 
-        .footer { margin-top: 20px; font-size: 0.8em; color: #666; }
-        .setup-warning { background-color: #332200; border: 1px solid #ffcc00; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+        }
+
+        h1 { 
+            color: var(--text-main); 
+            font-weight: 700;
+            font-size: 1.8em;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h1 span {
+            color: var(--primary);
+            text-shadow: 0 0 15px var(--primary-glow);
+        }
+
+        /* Coin Selector Tabs */
+        .tabs {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 10px 20px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.95em;
+            transition: all 0.25s ease;
+        }
+
+        .tab:hover {
+            color: var(--text-main);
+            background: rgba(255,255,255,0.07);
+        }
+
+        .tab.active {
+            background: var(--primary);
+            color: #ffffff;
+            border-color: var(--primary);
+            box-shadow: 0 0 20px var(--primary-glow);
+        }
+
+        /* Glassmorphic Metrics */
+        .metrics { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 18px;
+            margin-bottom: 25px; 
+        }
+
+        .metric { 
+            background: var(--bg-card);
+            backdrop-filter: blur(10px);
+            padding: 20px; 
+            border-radius: 16px; 
+            border: 1px solid var(--border-color);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .metric:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        }
+
+        .metric small { 
+            color: var(--text-muted); 
+            font-size: 0.85em; 
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .metric b { 
+            display: block; 
+            font-size: 1.6em; 
+            font-weight: 700;
+        }
+
+        .signal-long { color: var(--green); text-shadow: 0 0 10px rgba(0, 230, 118, 0.2); }
+        .signal-short { color: var(--red); text-shadow: 0 0 10px rgba(255, 61, 113, 0.2); }
+        .signal-neutral { color: var(--text-muted); }
+
+        /* Chart Area */
+        .chart-container-wrapper {
+            position: relative;
+            background-color: #0d0e12;
+            border-radius: 16px;
+            padding: 15px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 20px;
+        }
+
+        .chart-area { 
+            width: 100%;
+            height: 520px; 
+            position: relative; 
+        }
+
+        /* Controls Panel */
+        .controls-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255,255,255,0.02);
+            border-radius: 12px;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.03);
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .control-label {
+            color: var(--text-muted);
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+
+        .btn { 
+            background: rgba(255,255,255,0.04); 
+            border: 1px solid var(--border-color); 
+            color: var(--text-muted); 
+            padding: 8px 16px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-weight: 600;
+            font-size: 0.9em;
+            transition: all 0.2s ease; 
+        }
+
+        .btn:hover { 
+            color: var(--text-main);
+            background: rgba(255,255,255,0.08); 
+        }
+
+        .btn.active { 
+            background: rgba(78, 130, 238, 0.15); 
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        /* Checkbox Toggles */
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 600;
+            color: var(--text-muted);
+            user-select: none;
+            transition: color 0.2s ease;
+        }
+
+        .checkbox-item:hover {
+            color: var(--text-main);
+        }
+
+        .checkbox-item input {
+            cursor: pointer;
+            accent-color: var(--primary);
+            width: 16px;
+            height: 16px;
+        }
+
+        .footer { 
+            margin-top: 20px; 
+            font-size: 0.8em; 
+            color: var(--text-muted); 
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+        }
+
+        .setup-warning { 
+            background-color: rgba(255, 204, 0, 0.08); 
+            border: 1px solid #ffcc00; 
+            padding: 20px; 
+            border-radius: 12px; 
+            margin-bottom: 25px; 
+        }
+
+        .loading-spinner {
+            color: var(--text-muted);
+            text-align: center;
+            padding: 60px 0;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Crypto AI Prediction Dashboard</h1>
+        <header>
+            <h1>🚀 Crypto <span>AI Prediction</span> Dashboard</h1>
+            <div id="last-sync" style="font-size: 0.85em; color: var(--text-muted);">Syncing...</div>
+        </header>
 
-        <div id="setup" class="setup-warning">
+        <div id="setup" class="setup-warning" style="display: none;">
             <h3 style="margin-top: 0; color: #ffcc00;">⚠️ Developer Setup Required</h3>
             <p>Please enter your <strong>Supabase URL</strong> and <strong>Publishable Key</strong> in the <code>index.html</code> source code.</p>
         </div>
 
-        <div id="loading" style="display: none;">Connecting to Supabase...</div>
+        <!-- Coin Selector Tabs -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchCoin('BTCUSDT', 1, this)">Bitcoin (BTC)</button>
+            <button class="tab" onclick="switchCoin('ETHUSDT', 2, this)">Ethereum (ETH)</button>
+            <button class="tab" onclick="switchCoin('XRPUSDT', 3, this)">Ripple (XRP)</button>
+        </div>
+
+        <div id="loading" class="loading-spinner">Connecting to Supabase...</div>
 
         <div id="content" style="display: none;">
+            <!-- Metrics Panels -->
             <div class="metrics">
-                <div class="metric"><small>Last Price</small><b id="last-price">$0.00</b></div>
-                <div class="metric"><small>AI Prediction (<span id="chosen-model">...</span>)</small><b id="pred-price">$0.00</b></div>
+                <div class="metric"><small>Last Market Price</small><b id="last-price">$0.00</b></div>
+                <div class="metric"><small>Consensus Model</small><b id="chosen-model" style="color: var(--primary);">None</b></div>
                 <div class="metric"><small>Expected Change</small><b id="change-pct">+0.00%</b></div>
-                <div class="metric"><small>Signal</small><b id="signal">NEUTRAL</b></div>
+                <div class="metric"><small>Signal Recommendation</small><b id="signal">NEUTRAL</b></div>
             </div>
 
-            <div class="controls">
-                <span>Resolution:</span>
-                <button class="btn active" onclick="setResolution('5m', this)">5m</button>
-                <button class="btn" onclick="setResolution('1h', this)">1h</button>
-                <button class="btn" onclick="setResolution('1d', this)">1d (All Time)</button>
-            </div>
-
-            <div class="chart-wrapper" id="scroll-container">
-                <div class="chart-area" id="chart-parent">
-                    <canvas id="predictionChart"></canvas>
+            <!-- Controls Panel -->
+            <div class="controls-panel">
+                <div class="control-group">
+                    <span class="control-label">Resolution:</span>
+                    <button class="btn active" onclick="setResolution('5m', this)">5m</button>
+                    <button class="btn" onclick="setResolution('1h', this)">1h</button>
+                    <button class="btn" onclick="setResolution('1d', this)">1d</button>
                 </div>
+                
+                <div class="control-group">
+                    <span class="control-label">Models Overlay:</span>
+                    <div class="checkbox-container">
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="chk-lstm" checked onchange="toggleModel('LSTM')">
+                            <span style="color: #ffcc00;">LSTM (9f)</span>
+                        </label>
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="chk-tft" checked onchange="toggleModel('Transformer')">
+                            <span style="color: #ff00ff;">TFT (14f)</span>
+                        </label>
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="chk-arima" checked onchange="toggleModel('ARIMA')">
+                            <span style="color: #00ffff;">ARIMA</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TradingView Candlestick Chart -->
+            <div class="chart-container-wrapper">
+                <div class="chart-area" id="chart-area-target"></div>
             </div>
         </div>
 
-        <div class="footer">Data updated every 30 seconds. Chart is scrollable sideways to view history. <span id="last-sync" style="color: #4A90E2; float: right;"></span></div>
+        <div class="footer">
+            <span>Updating automatically every 30 seconds. Hover on chart to see OHLC values.</span>
+            <span>Powered by Supabase & TradingView</span>
+        </div>
     </div>
 
     <script>
@@ -72,28 +338,45 @@
         const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_4clMLjZVc1oacTPOb5XrUA_w9T5aevj';
 
         const isSetupComplete = SUPABASE_URL && !SUPABASE_URL.includes('YOUR_SUPABASE');
-        let currentResolution = '5m';
+        
+        let activeCoin = 'BTCUSDT';
+        let activeCoinId = 1;
+        let activeResolution = '5m';
+        let visibleModels = ['LSTM', 'Transformer', 'ARIMA'];
+        
         let globalPayload = null;
-        let myChart;
+        let chartInstance = null;
+        let candlestickSeries = null;
+        let modelLines = {};
+
+        // Colors configurations for overlay models
+        const MODEL_COLORS = {
+            'LSTM': '#ffcc00',        // Yellow
+            'Transformer': '#ff00ff', // Magenta
+            'ARIMA': '#00ffff'        // Cyan
+        };
 
         if (isSetupComplete) {
-            document.getElementById('setup').style.display = 'none';
-            document.getElementById('loading').style.display = 'block';
-
             const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
             async function fetchPredictions() {
                 try {
-                    console.log(`[${new Date().toLocaleTimeString()}] Polling Supabase for new data...`);
-                    // Using a dummy filter to bust aggressive browser caching
-                    const { data, error } = await supabase.from('predictions').select('payload').eq('id', 1).neq('id', Math.floor(Math.random() * 10000000)).single();
+                    console.log(`[${new Date().toLocaleTimeString()}] Querying row id: ${activeCoinId} for ${activeCoin}`);
+                    const { data, error } = await supabase
+                        .from('predictions')
+                        .select('payload')
+                        .eq('id', activeCoinId)
+                        .neq('id', Math.floor(Math.random() * 10000000))
+                        .single();
+
                     if (error) {
                         if (error.code === 'PGRST116') {
-                            document.getElementById('loading').innerText = '⏳ Waiting for first prediction from Colab engine...';
+                            document.getElementById('loading').innerText = `⏳ Waiting for live predictions for ${activeCoin}...`;
                             return;
                         }
                         throw error;
                     }
+
                     if (data && data.payload) {
                         globalPayload = data.payload;
                         document.getElementById('last-sync').innerText = `Last Sync: ${new Date().toLocaleTimeString()}`;
@@ -105,18 +388,43 @@
                 }
             }
 
+            function switchCoin(symbol, id, tab) {
+                activeCoin = symbol;
+                activeCoinId = id;
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                if (tab) tab.classList.add('active');
+                
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('loading').innerText = `Connecting to Supabase for ${symbol}...`;
+                document.getElementById('content').style.display = 'none';
+
+                fetchPredictions();
+            }
+
             function setResolution(res, btn) {
-                currentResolution = res;
+                activeResolution = res;
                 document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
                 if (btn) btn.classList.add('active');
 
-                // Adjust chart width for daily (less points) vs 5m (many points)
-                const parent = document.getElementById('chart-parent');
-                if (res === '1d') parent.style.minWidth = '1200px';
-                else if (res === '1h') parent.style.minWidth = '2500px';
-                else parent.style.minWidth = '4000px';
-
                 renderDashboard();
+            }
+
+            function toggleModel(modelName) {
+                const isChecked = document.getElementById(`chk-${modelName === 'Transformer' ? 'tft' : modelName.toLowerCase()}`).checked;
+                
+                if (isChecked) {
+                    if (!visibleModels.includes(modelName)) visibleModels.push(modelName);
+                } else {
+                    visibleModels = visibleModels.filter(m => m !== modelName);
+                }
+                
+                renderDashboard();
+            }
+
+            function addDays(dateStr, days) {
+                const date = new Date(dateStr);
+                date.setDate(date.getDate() + days);
+                return date.toISOString().split('T')[0];
             }
 
             function renderDashboard() {
@@ -126,97 +434,165 @@
 
                 const lastPrice = globalPayload.last_price;
                 const chosenModel = globalPayload.chosen_model;
-                const prediction = globalPayload.predictions[chosenModel];
+                const predictions = globalPayload.predictions;
 
+                // 1. Render metrics panels
                 document.getElementById('last-price').innerText = `$${lastPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
-                document.getElementById('chosen-model').innerText = chosenModel;
+                document.getElementById('chosen-model').innerText = chosenModel === 'Transformer' ? 'TFT' : chosenModel;
 
-                if (prediction) {
-                    const predPrice = prediction.price;
-                    const changePct = prediction.change_pct;
-                    document.getElementById('pred-price').innerText = `$${predPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+                const consensusPrediction = predictions[chosenModel];
+                if (consensusPrediction) {
+                    const changePct = consensusPrediction.change_pct;
                     document.getElementById('change-pct').innerText = `${changePct > 0 ? '+' : ''}${changePct.toFixed(2)}%`;
                     document.getElementById('change-pct').className = changePct > 0 ? 'signal-long' : 'signal-short';
+                    
                     const signalElem = document.getElementById('signal');
-                    if (changePct > 0.1) { signalElem.innerText = 'LONG'; signalElem.className = 'signal-long'; }
-                    else if (changePct < -0.1) { signalElem.innerText = 'SHORT'; signalElem.className = 'signal-short'; }
-                    else { signalElem.innerText = 'NEUTRAL'; signalElem.className = 'signal-neutral'; }
+                    if (changePct > 0.1) { signalElem.innerText = 'LONG 🟢'; signalElem.className = 'signal-long'; }
+                    else if (changePct < -0.1) { signalElem.innerText = 'SHORT 🔴'; signalElem.className = 'signal-short'; }
+                    else { signalElem.innerText = 'NEUTRAL ⚪'; signalElem.className = 'signal-neutral'; }
                 }
 
-                updateChart();
-            }
-
-            function updateChart() {
-                const ctx = document.getElementById('predictionChart').getContext('2d');
-                const history = globalPayload.history ? globalPayload.history[currentResolution] : [];
-
-                const labels = history.map(h => h.t);
-                const dataPoints = history.map(h => h.p);
-
-                labels.push("NEXT");
-
-                const datasets = [
-                    {
-                        label: 'Market Price',
-                        data: dataPoints,
-                        borderColor: '#4A90E2',
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        fill: false,
-                        tension: 0.1
-                    }
-                ];
-
-                if (globalPayload.pred_history) {
-                    const timeKey = currentResolution === '5m' ? 't_5m' : (currentResolution === '1h' ? 't_1h' : 't_1d');
-                    const lstmLine = new Array(labels.length).fill(null);
-                    const tftLine = new Array(labels.length).fill(null);
-
-                    globalPayload.pred_history.forEach((pred, index) => {
-                        let labelIdx = labels.indexOf(pred[timeKey]);
-
-                        // The latest prediction applies to the future "NEXT" label
-                        if (index === globalPayload.pred_history.length - 1) {
-                            labelIdx = labels.length - 1;
-                            labels[labelIdx] = `NEXT (${pred[timeKey]})`;
-                        }
-
-                        if (labelIdx !== -1) {
-                            if (pred.LSTM) lstmLine[labelIdx] = pred.LSTM;
-                            if (pred.Transformer) tftLine[labelIdx] = pred.Transformer;
-                        }
-                    });
-
-                    datasets.push({ label: 'LSTM Prediction History', data: lstmLine, borderColor: '#ffcc00', borderWidth: 2, borderDash: [5, 5], pointRadius: 2, spanGaps: true, fill: false });
-                    datasets.push({ label: 'Transformer Prediction History', data: tftLine, borderColor: '#ff00ff', borderWidth: 2, borderDash: [5, 5], pointRadius: 2, spanGaps: true, fill: false });
-                }
-
-                if (myChart) myChart.destroy();
-                myChart = new Chart(ctx, {
-                    type: 'line',
-                    data: { labels: labels, datasets: datasets },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        animation: false,
-                        scales: {
-                            y: { grid: { color: '#333' }, ticks: { color: '#aaa' } },
-                            x: { grid: { color: '#333' }, ticks: { color: '#aaa' }, autoSkip: true, maxRotation: 0 }
-                        },
-                        plugins: {
-                            legend: { labels: { color: '#e0e0e0' } }
-                        }
+                // 2. Initialize or Update TradingView Chart
+                const chartContainer = document.getElementById('chart-area-target');
+                
+                // Clear old chart elements to rebuild on resolution/coin changes
+                chartContainer.innerHTML = '';
+                
+                chartInstance = LightweightCharts.createChart(chartContainer, {
+                    width: chartContainer.clientWidth,
+                    height: 520,
+                    layout: {
+                        background: { color: '#0d0e12' },
+                        textColor: '#a3a5b2',
+                        fontSize: 12,
+                        fontFamily: 'Outfit, sans-serif'
+                    },
+                    grid: {
+                        vertLines: { color: 'rgba(43, 49, 67, 0.3)' },
+                        horzLines: { color: 'rgba(43, 49, 67, 0.3)' }
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal
+                    },
+                    rightPriceScale: {
+                        borderColor: 'rgba(43, 49, 67, 0.5)',
+                        autoScale: true
+                    },
+                    timeScale: {
+                        borderColor: 'rgba(43, 49, 67, 0.5)',
+                        timeVisible: activeResolution !== '1d',
+                        secondsVisible: false
                     }
                 });
 
-                // Scroll to the end automatically
-                const container = document.getElementById('scroll-container');
-                container.scrollLeft = container.scrollWidth;
+                // Add Candlestick Series
+                candlestickSeries = chartInstance.addCandlestickSeries({
+                    upColor: '#00e676',
+                    downColor: '#ff3d71',
+                    borderDownColor: '#ff3d71',
+                    borderUpColor: '#00e676',
+                    wickDownColor: '#ff3d71',
+                    wickUpColor: '#00e676'
+                });
+
+                // Format and load candlestick history
+                const rawHistory = globalPayload.history ? globalPayload.history[activeResolution] : [];
+                const formattedHistory = rawHistory.map(item => ({
+                    time: item.time,
+                    open: item.o,
+                    high: item.h,
+                    low: item.l,
+                    close: item.c
+                })).sort((a, b) => (typeof a.time === 'string' ? a.time.localeCompare(b.time) : a.time - b.time));
+
+                if (formattedHistory.length === 0) {
+                    console.warn("No candlestick history returned in payload!");
+                    return;
+                }
+
+                candlestickSeries.setData(formattedHistory);
+
+                const lastCandle = formattedHistory[formattedHistory.length - 1];
+                const lastTime = lastCandle.time;
+                const lastClose = lastCandle.close;
+
+                // Calculate future prediction timestamp based on resolution
+                let futureTime;
+                if (activeResolution === '5m') {
+                    futureTime = lastTime + 900; // +15 mins
+                } else if (activeResolution === '1h') {
+                    futureTime = lastTime + 10800; // +3 hours
+                } else { // 1d
+                    futureTime = addDays(lastTime, 3); // +3 days
+                }
+
+                // Render Active Models Overlay
+                visibleModels.forEach(modelName => {
+                    const predData = predictions[modelName];
+                    if (!predData) return;
+
+                    const predPrice = predData.price;
+                    const changePct = predData.change_pct;
+                    const color = MODEL_COLORS[modelName];
+
+                    // Create line series for the prediction path
+                    const lineSeries = chartInstance.addLineSeries({
+                        color: color,
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        pointRadius: 4,
+                        title: modelName
+                    });
+
+                    // Point A: Last actual close. Point B: Future predicted price
+                    const lineData = [
+                        { time: lastTime, value: lastClose },
+                        { time: futureTime, value: predPrice }
+                    ];
+                    lineSeries.setData(lineData);
+
+                    // Add Y-Axis Price Badge
+                    lineSeries.createPriceLine({
+                        price: predPrice,
+                        color: color,
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dotted,
+                        axisLabelVisible: true,
+                        title: modelName
+                    });
+
+                    // Add circular target marker at the future coordinate
+                    lineSeries.setMarkers([
+                        {
+                            time: futureTime,
+                            position: 'inLine',
+                            color: changePct > 0 ? '#00e676' : '#ff3d71',
+                            shape: 'circle',
+                            text: `${modelName === 'Transformer' ? 'TFT' : modelName}`
+                        }
+                    ]);
+                });
+
+                // Auto-fit content and scroll to the end
+                chartInstance.timeScale().fitContent();
+
+                // Responsive resize
+                window.addEventListener('resize', () => {
+                    if (chartInstance) {
+                        chartInstance.resize(chartContainer.clientWidth, 520);
+                    }
+                });
             }
 
+            window.switchCoin = switchCoin;
             window.setResolution = setResolution;
+            window.toggleModel = toggleModel;
+            
             fetchPredictions();
             setInterval(fetchPredictions, 30000);
+        } else {
+            document.getElementById('setup').style.display = 'block';
+            document.getElementById('loading').style.display = 'none';
         }
     </script>
 </body>
