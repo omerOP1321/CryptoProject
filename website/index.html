@@ -526,7 +526,7 @@
                     futureTime = addDays(lastTime, 3); // +3 days
                 }
 
-                // Render Active Models Overlay
+                // Render Active Models Overlay (Continuous History + Future target)
                 visibleModels.forEach(modelName => {
                     const predData = predictions[modelName];
                     if (!predData) return;
@@ -544,33 +544,71 @@
                         title: modelName
                     });
 
-                    // Point A: Last actual close. Point B: Future predicted price
-                    const lineData = [
-                        { time: lastTime, value: lastClose },
-                        { time: futureTime, value: predPrice }
-                    ];
-                    lineSeries.setData(lineData);
+                    const rawPredHistory = globalPayload.prediction_history || [];
+                    const modelNameKey = modelName === 'Transformer' ? 'Transformer' : modelName;
 
-                    // Add Y-Axis Price Badge
-                    lineSeries.createPriceLine({
-                        price: predPrice,
-                        color: color,
-                        lineWidth: 2,
-                        lineStyle: LightweightCharts.LineStyle.Dotted,
-                        axisLabelVisible: true,
-                        title: modelName
-                    });
+                    const modelData = rawPredHistory.map(item => ({
+                        time: item.time,
+                        value: item[modelNameKey]
+                    })).filter(item => item.value !== undefined && item.value !== null)
+                      .sort((a, b) => a.time - b.time);
 
-                    // Add circular target marker at the future coordinate
-                    LightweightCharts.createSeriesMarkers(lineSeries, [
-                        {
-                            time: futureTime,
-                            position: 'inBar',
-                            color: changePct > 0 ? '#00e676' : '#ff3d71',
-                            shape: 'circle',
-                            text: `${modelName === 'Transformer' ? 'TFT' : modelName}`
-                        }
-                    ]);
+                    if (modelData.length > 0) {
+                        lineSeries.setData(modelData);
+
+                        const latestPred = modelData[modelData.length - 1];
+                        const latestTime = latestPred.time;
+                        const latestValue = latestPred.value;
+
+                        // Add Y-Axis Price Badge
+                        lineSeries.createPriceLine({
+                            price: latestValue,
+                            color: color,
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Dotted,
+                            axisLabelVisible: true,
+                            title: modelName
+                        });
+
+                        // Add circular target marker ONLY at the final future coordinate
+                        LightweightCharts.createSeriesMarkers(lineSeries, [
+                            {
+                                time: latestTime,
+                                position: 'inBar',
+                                color: changePct > 0 ? '#00e676' : '#ff3d71',
+                                shape: 'circle',
+                                text: `${modelName === 'Transformer' ? 'TFT' : modelName}`
+                            }
+                        ]);
+                    } else {
+                        // Fallback: Point A: Last actual close. Point B: Future predicted price
+                        const lineData = [
+                            { time: lastTime, value: lastClose },
+                            { time: futureTime, value: predPrice }
+                        ];
+                        lineSeries.setData(lineData);
+
+                        // Add Y-Axis Price Badge
+                        lineSeries.createPriceLine({
+                            price: predPrice,
+                            color: color,
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Dotted,
+                            axisLabelVisible: true,
+                            title: modelName
+                        });
+
+                        // Add circular target marker at the future coordinate
+                        LightweightCharts.createSeriesMarkers(lineSeries, [
+                            {
+                                time: futureTime,
+                                position: 'inBar',
+                                color: changePct > 0 ? '#00e676' : '#ff3d71',
+                                shape: 'circle',
+                                text: `${modelName === 'Transformer' ? 'TFT' : modelName}`
+                            }
+                        ]);
+                    }
                 });
 
                 // Auto-fit content and scroll to the end
