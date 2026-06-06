@@ -31,7 +31,10 @@ else:
     print(f"✅ Supabase credentials found at {CREDS_FILE}")
 
 # Install requirements
-get_ipython().run_line_magic('pip', 'install ta supabase')
+try:
+    get_ipython().run_line_magic('pip', 'install ta supabase')
+except NameError:
+    pass
 
 
 # In[2]:
@@ -192,23 +195,21 @@ class TFTModel(nn.Module):
 # --- 3. Global State ---
 df_hist_dict = {}
 scalers_dict = {}
-model_lstm = None
-model_tft = None
+models_lstm = {}
+models_tft = {}
 
-# LSTM expects 9 features
+# Default features (9 features)
 LSTM_FEATURES = [
     'log_ret', 'rsi', 'rsi_change', 'rsi_accel', 'macd', 'macd_slope',
     'bb_pband_change', 'volume', 'ma_dist'
 ]
 
-# Transformer expects all 14 features
+# Transformer / TFT features (14 features)
 TFT_FEATURES = [
     'log_ret', 'rsi', 'rsi_change', 'rsi_accel', 'macd', 'macd_slope',
     'bb_pband_change', 'volume', 'ma_dist', 'volume_z', 'vol_spike', 'adx',
     'hour_sin', 'hour_cos'
 ]
-
-lstm_features = list(LSTM_FEATURES)
 
 # --- 4. Core Functions ---
 
@@ -282,35 +283,53 @@ def infer_arima(close_series):
             return float(close_series.iloc[-1])
 
 def initialize():
-    global df_hist_dict, scalers_dict, model_lstm, model_tft, lstm_features
+    global df_hist_dict, scalers_dict, models_lstm, models_tft
 
     print("\n[Init] Loading models into memory & moving to GPU...")
-    lstm_path = os.path.join(MODEL_DIR, 'best_lstm_model.pth')
-    if os.path.exists(lstm_path):
-        try:
-            state_dict = torch.load(lstm_path, map_location=DEVICE)
-            input_size = state_dict['lstm.weight_ih_l0'].shape[1]
-            print(f"   -> Detected LSTM checkpoint input size: {input_size} features.")
+    
+    # 1. Load LSTM models for each symbol
+    for symbol, db_id in COINS:
+        lstm_path = os.path.join(MODEL_DIR, f'best_lstm_model_{symbol}.pth')
+        if not os.path.exists(lstm_path):
+            lstm_path = os.path.join(MODEL_DIR, 'best_lstm_model.pth')
             
-            # Slices features to match the exact size of the loaded checkpoint
-            lstm_features = TFT_FEATURES[:input_size]
+        if os.path.exists(lstm_path):
+            try:
+                state_dict = torch.load(lstm_path, map_location=DEVICE)
+                input_size = state_dict['lstm.weight_ih_l0'].shape[1]
+                print(f"   -> Detected LSTM checkpoint for {symbol} (path: {os.path.basename(lstm_path)}) input size: {input_size} features.")
+                
+                model_lstm = LSTMModel(input_size=input_size)
+                model_lstm.load_state_dict(state_dict)
+                model_lstm.to(DEVICE)
+                model_lstm.eval()
+                models_lstm[symbol] = (model_lstm, input_size)
+                print(f"   -> LSTM model for {symbol} loaded on {DEVICE}.")
+            except Exception as e:
+                print(f"   -> Failed to load LSTM model for {symbol}: {e}")
+        else:
+            print(f"   -> ⚠️ No LSTM model found for {symbol} (checked specific & global).")
+
+    # 2. Load TFT models for each symbol
+    for symbol, db_id in COINS:
+        tft_path = os.path.join(MODEL_DIR, f'best_tft_vsn_{symbol}.pth')
+        if not os.path.exists(tft_path):
+            tft_path = os.path.join(MODEL_DIR, 'best_tft_vsn.pth')
             
-            model_lstm = LSTMModel(input_size=input_size)
-            model_lstm.load_state_dict(state_dict)
-            model_lstm.to(DEVICE)
-            model_lstm.eval()
-            print(f"   -> LSTM loaded on {DEVICE}.")
-        except Exception as e:
-            print(f"   -> Failed to load LSTM model dynamically: {e}")
+        if os.path.exists(tft_path):
+            try:
+                model_tft = TFTModel(input_dim=len(TFT_FEATURES), num_vars=len(TFT_FEATURES))
+                model_tft.load_state_dict(torch.load(tft_path, map_location=DEVICE))
+                model_tft.to(DEVICE)
+                model_tft.eval()
+                models_tft[symbol] = model_tft
+                print(f"   -> Transformer model for {symbol} loaded on {DEVICE} (path: {os.path.basename(tft_path)}).")
+            except Exception as e:
+                print(f"   -> Failed to load TFT model for {symbol}: {e}")
+        else:
+            print(f"   -> ⚠️ No Transformer model found for {symbol} (checked specific & global).")
 
-    tft_path = os.path.join(MODEL_DIR, 'best_tft_vsn.pth')
-    if os.path.exists(tft_path):
-        model_tft = TFTModel(input_dim=len(TFT_FEATURES), num_vars=len(TFT_FEATURES))
-        model_tft.load_state_dict(torch.load(tft_path, map_location=DEVICE))
-        model_tft.to(DEVICE)
-        model_tft.eval()
-        print(f"   -> Transformer loaded on {DEVICE}.")
-
+    # 3. Fit scalers
     for symbol, db_id in COINS:
         csv_path = os.path.join(DATA_DIR, f'{symbol}_5m_data.csv')
         print(f"\n[Init] Loading historical data for {symbol} ({csv_path})...")
@@ -325,12 +344,20 @@ def initialize():
             train_end = int(len(df_full_feat) * 0.8)
             df_train = df_full_feat.iloc[:train_end]
 
+            # Determine the features to fit based on the loaded LSTM model
+            lstm_info = models_lstm.get(symbol)
+            if lstm_info is not None:
+                _, input_size = lstm_info
+                lstm_features_subset = TFT_FEATURES[:input_size]
+            else:
+                lstm_features_subset = LSTM_FEATURES # fallback
+
             lstm_scaler = StandardScaler()
             tft_scaler = StandardScaler()
-            lstm_scaler.fit(df_train[lstm_features])
+            lstm_scaler.fit(df_train[lstm_features_subset])
             tft_scaler.fit(df_train[TFT_FEATURES])
-            scalers_dict[symbol] = (lstm_scaler, tft_scaler)
-            print("      -> Scalers fitted.")
+            scalers_dict[symbol] = (lstm_scaler, tft_scaler, lstm_features_subset)
+            print(f"      -> Scalers fitted (LSTM features: {len(lstm_features_subset)}).")
         else:
             print(f"   -> ⚠️ No historical data found for {symbol}! Will initialize from live fetch.")
             df_hist_dict[symbol] = pd.DataFrame()
@@ -407,21 +434,32 @@ def run_inference(symbol, db_id):
     h_band = df_features['bb_hband'].iloc[-1]
 
     # Load cached scalers
-    lstm_scaler, tft_scaler = scalers_dict.get(symbol, (None, None))
-    if lstm_scaler is None:
+    scaler_info = scalers_dict.get(symbol)
+    if scaler_info is not None:
+        lstm_scaler, tft_scaler, lstm_features_subset = scaler_info
+    else:
         print("   -> ⚠️ Scalers not fitted. Fitting on the fly on available history...")
+        lstm_info = models_lstm.get(symbol)
+        if lstm_info is not None:
+            _, input_size = lstm_info
+            lstm_features_subset = TFT_FEATURES[:input_size]
+        else:
+            lstm_features_subset = LSTM_FEATURES
+        
         lstm_scaler = StandardScaler()
         tft_scaler = StandardScaler()
-        lstm_scaler.fit(df_features[lstm_features])
+        lstm_scaler.fit(df_features[lstm_features_subset])
         tft_scaler.fit(df_features[TFT_FEATURES])
-        scalers_dict[symbol] = (lstm_scaler, tft_scaler)
+        scalers_dict[symbol] = (lstm_scaler, tft_scaler, lstm_features_subset)
 
     # 4. Infer LSTM
-    if model_lstm:
-        seq_lstm = df_features[lstm_features].tail(SEQ_LENGTH).values
+    lstm_info = models_lstm.get(symbol)
+    if lstm_info is not None:
+        lstm_model_obj, input_size = lstm_info
+        seq_lstm = df_features[lstm_features_subset].tail(SEQ_LENGTH).values
         input_lstm = torch.tensor(lstm_scaler.transform(seq_lstm), dtype=torch.float32).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
-            pred_log_ret = model_lstm(input_lstm).item()
+            pred_log_ret = lstm_model_obj(input_lstm).item()
 
         pred_price_lstm = last_price * math.exp(pred_log_ret)
         results["predictions"]["LSTM"] = {
@@ -431,11 +469,12 @@ def run_inference(symbol, db_id):
         }
 
     # 5. Infer Transformer (Expects 14 features)
-    if model_tft:
+    tft_model_obj = models_tft.get(symbol)
+    if tft_model_obj is not None:
         seq_tft = df_features[TFT_FEATURES].tail(SEQ_LENGTH).values
         input_tft = torch.tensor(tft_scaler.transform(seq_tft), dtype=torch.float32).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
-            pred_bb = model_tft(input_tft).item()
+            pred_bb = tft_model_obj(input_tft).item()
 
         pred_price_tft = l_band + (pred_bb * (h_band - l_band))
         results["predictions"]["Transformer"] = {
