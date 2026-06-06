@@ -575,6 +575,7 @@
 
                 // Auto-fit content and scroll to the end
                 chartInstance.timeScale().fitContent();
+                chartInstance.timeScale().applyOptions({ rightOffset: 8 });
 
                 // Responsive resize
                 window.addEventListener('resize', () => {
