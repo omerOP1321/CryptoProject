@@ -17,5 +17,7 @@ venv/
 *.npy
 *.keras
 
-# Ignore Supabase configuration files
+# Ignore Supabase and Google Drive API credentials
 supabase_creds.json
+credentials.json
+token.json

@@ -399,7 +399,7 @@ def infer_arima(close_series):
 def initialize():
     global df_hist_dict, scalers_dict, models_lstm, models_tft
 
-    # 0. Sync models from Google Drive over the network if running locally and credentials exist
+    # 0. Sync models and historical data from Google Drive over the network if running locally and credentials exist
     is_colab = False
     try:
         import google.colab
@@ -414,8 +414,9 @@ def initialize():
             print("\n[Init] Local run & credentials.json detected. Connecting to Google Drive API...")
             service = get_drive_service()
             if service is not None:
-                print("   -> Connected! Fetching latest models from Google Drive...")
+                print("   -> Connected! Fetching latest models & historical data from Google Drive...")
                 for symbol, db_id in COINS:
+                    # 1. Download model checkpoints
                     lstm_file = f'best_lstm_model_{symbol}.pth'
                     tft_file = f'best_tft_vsn_{symbol}.pth'
                     
@@ -424,11 +425,18 @@ def initialize():
                     
                     download_file_from_drive(service, lstm_file, local_lstm_path)
                     download_file_from_drive(service, tft_file, local_tft_path)
+
+                    # 2. Download historical data CSV if missing
+                    csv_file = f'{symbol}_5m_data.csv'
+                    local_csv_path = os.path.join(DATA_DIR, csv_file)
+                    if not os.path.exists(local_csv_path):
+                        print(f"   -> Local historical data for {symbol} not found. Downloading from Google Drive...")
+                        download_file_from_drive(service, csv_file, local_csv_path)
             else:
                 print("   -> ⚠️ Google Drive API service could not be initialized.")
         else:
             print("\n[Init] Running locally. credentials.json not found in project directory.")
-            print("       -> Will attempt to load already cached models from 'models/' folder.")
+            print("       -> Will attempt to load already cached models and data locally.")
 
     print("\n[Init] Loading models into memory & moving to GPU...")
     
