@@ -16,3 +16,6 @@ venv/
 *.pkl
 *.npy
 *.keras
+
+# Ignore Supabase configuration files
+supabase_creds.json
