@@ -47,6 +47,7 @@ import json
 import requests
 import signal
 import warnings
+import io
 from supabase import create_client, Client
 import pandas as pd
 import numpy as np
@@ -57,6 +58,16 @@ import math
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.arima.model import ARIMA
+
+# Google Drive API Client imports
+try:
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+except ImportError:
+    pass
 
 # --- 1. Cloud & Path Configuration ---
 import pathlib
@@ -232,6 +243,90 @@ TFT_FEATURES = [
 
 # --- 4. Core Functions ---
 
+# --- Google Drive API Helpers ---
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+
+def get_drive_service():
+    creds = None
+    base_dir = DRIVE_BASE_DIR if (DRIVE_BASE_DIR and os.path.exists(DRIVE_BASE_DIR)) else os.getcwd()
+    
+    token_path = os.path.join(base_dir, 'token.json')
+    creds_path = os.path.join(base_dir, 'credentials.json')
+    
+    if os.path.exists(token_path):
+        try:
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        except Exception as e:
+            print(f"   -> ⚠️ Failed to load token.json: {e}")
+            creds = None
+            
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                print(f"   -> ⚠️ Token refresh failed: {e}")
+                creds = None
+        if not creds:
+            if not os.path.exists(creds_path):
+                print(f"\n⚠️ Google Drive credentials.json not found at {creds_path}!")
+                print("To run locally and fetch models from Drive, please:")
+                print("1. Go to Google Cloud Console -> APIs & Services -> Credentials")
+                print("2. Create an OAuth client ID (Desktop Application) and download the JSON file.")
+                print(f"3. Rename it to 'credentials.json' and place it in: {base_dir}\n")
+                return None
+                
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
+                creds = flow.run_local_server(port=0)
+            except Exception as e:
+                print(f"   -> ❌ Google Drive Authentication failed: {e}")
+                return None
+            
+        try:
+            with open(token_path, 'w') as token:
+                token.write(creds.to_json())
+        except Exception as e:
+            print(f"   -> ⚠️ Failed to save token.json: {e}")
+            
+    try:
+        return build('drive', 'v3', credentials=creds)
+    except Exception as e:
+        print(f"   -> ❌ Failed to build Google Drive client: {e}")
+        return None
+
+def download_file_from_drive(service, filename, local_dest_path):
+    if service is None:
+        return False
+    try:
+        query = f"name = '{filename}' and trashed = false"
+        results = service.files().list(q=query, spaces='drive', fields='files(id, name, modifiedTime)').execute()
+        items = results.get('files', [])
+        
+        if not items:
+            print(f"   -> ⚠️ File '{filename}' not found in Google Drive.")
+            return False
+            
+        items = sorted(items, key=lambda x: x['modifiedTime'], reverse=True)
+        file_id = items[0]['id']
+        
+        print(f"   -> Downloading '{filename}' from Google Drive (ID: {file_id})...")
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+            
+        os.makedirs(os.path.dirname(local_dest_path), exist_ok=True)
+        with open(local_dest_path, 'wb') as f:
+            f.write(fh.getvalue())
+        print(f"   -> Successfully downloaded and saved to '{local_dest_path}'.")
+        return True
+    except Exception as e:
+        print(f"   -> ❌ Failed to download '{filename}' from Drive: {e}")
+        return False
+
 def fetch_latest_data(symbol, interval=INTERVAL, limit=1000):
     params = {'symbol': symbol, 'interval': interval, 'limit': limit}
     response = requests.get(BASE_URL, params=params)
@@ -303,6 +398,37 @@ def infer_arima(close_series):
 
 def initialize():
     global df_hist_dict, scalers_dict, models_lstm, models_tft
+
+    # 0. Sync models from Google Drive over the network if running locally and credentials exist
+    is_colab = False
+    try:
+        import google.colab
+        is_colab = True
+    except ImportError:
+        pass
+
+    if not is_colab:
+        base_dir = DRIVE_BASE_DIR if (DRIVE_BASE_DIR and os.path.exists(DRIVE_BASE_DIR)) else os.getcwd()
+        creds_path = os.path.join(base_dir, 'credentials.json')
+        if os.path.exists(creds_path):
+            print("\n[Init] Local run & credentials.json detected. Connecting to Google Drive API...")
+            service = get_drive_service()
+            if service is not None:
+                print("   -> Connected! Fetching latest models from Google Drive...")
+                for symbol, db_id in COINS:
+                    lstm_file = f'best_lstm_model_{symbol}.pth'
+                    tft_file = f'best_tft_vsn_{symbol}.pth'
+                    
+                    local_lstm_path = os.path.join(MODEL_DIR, lstm_file)
+                    local_tft_path = os.path.join(MODEL_DIR, tft_file)
+                    
+                    download_file_from_drive(service, lstm_file, local_lstm_path)
+                    download_file_from_drive(service, tft_file, local_tft_path)
+            else:
+                print("   -> ⚠️ Google Drive API service could not be initialized.")
+        else:
+            print("\n[Init] Running locally. credentials.json not found in project directory.")
+            print("       -> Will attempt to load already cached models from 'models/' folder.")
 
     print("\n[Init] Loading models into memory & moving to GPU...")
     
@@ -542,7 +668,17 @@ def run_inference(symbol, db_id):
             history_df = pd.DataFrame([new_entry])
 
         history_df = history_df.drop_duplicates(subset=['time'], keep='last').sort_values('time')
-        results["prediction_history"] = history_df.tail(500).to_dict('records')
+        raw_history = history_df.tail(500).to_dict('records')
+        cleaned_history = []
+        for entry in raw_history:
+            cleaned_entry = {}
+            for k, v in entry.items():
+                if isinstance(v, float) and math.isnan(v):
+                    cleaned_entry[k] = None
+                else:
+                    cleaned_entry[k] = v
+            cleaned_history.append(cleaned_entry)
+        results["prediction_history"] = cleaned_history
     except Exception as e:
         print(f"   -> Failed to update prediction history: {e}")
 
