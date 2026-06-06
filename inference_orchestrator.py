@@ -511,8 +511,10 @@ def initialize():
                     local_lstm_path = os.path.join(MODEL_DIR, lstm_file)
                     local_tft_path = os.path.join(MODEL_DIR, tft_file)
                     
-                    download_file_from_drive(service, lstm_file, local_lstm_path)
-                    download_file_from_drive(service, tft_file, local_tft_path)
+                    if not os.path.exists(local_lstm_path):
+                        download_file_from_drive(service, lstm_file, local_lstm_path)
+                    if not os.path.exists(local_tft_path):
+                        download_file_from_drive(service, tft_file, local_tft_path)
 
                     # 2. Download historical data CSV if missing
                     csv_file = f'{symbol}_5m_data.csv'
