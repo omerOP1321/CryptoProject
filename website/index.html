@@ -347,7 +347,7 @@
         let globalPayload = null;
         let chartInstance = null;
         let candlestickSeries = null;
-        let modelLines = {};
+        let activeModelSeries = [];
 
         // Colors configurations for overlay models
         const MODEL_COLORS = {
@@ -398,6 +398,11 @@
                 document.getElementById('loading').innerText = `Connecting to Supabase for ${symbol}...`;
                 document.getElementById('content').style.display = 'none';
 
+                // Reset chart instance to force recreation and fitting when switching coins
+                if (chartInstance) {
+                    chartInstance = null;
+                }
+
                 fetchPredictions();
             }
 
@@ -405,6 +410,11 @@
                 activeResolution = res;
                 document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
                 if (btn) btn.classList.add('active');
+
+                // Reset chart instance to force recreation and fitting when switching resolutions
+                if (chartInstance) {
+                    chartInstance = null;
+                }
 
                 renderDashboard();
             }
@@ -454,46 +464,58 @@
 
                 // 2. Initialize or Update TradingView Chart
                 const chartContainer = document.getElementById('chart-area-target');
+                let isFirstRender = false;
                 
-                // Clear old chart elements to rebuild on resolution/coin changes
-                chartContainer.innerHTML = '';
-                
-                chartInstance = LightweightCharts.createChart(chartContainer, {
-                    width: chartContainer.clientWidth,
-                    height: 520,
-                    layout: {
-                        background: { color: '#0d0e12' },
-                        textColor: '#a3a5b2',
-                        fontSize: 12,
-                        fontFamily: 'Outfit, sans-serif'
-                    },
-                    grid: {
-                        vertLines: { color: 'rgba(43, 49, 67, 0.3)' },
-                        horzLines: { color: 'rgba(43, 49, 67, 0.3)' }
-                    },
-                    crosshair: {
-                        mode: LightweightCharts.CrosshairMode.Normal
-                    },
-                    rightPriceScale: {
-                        borderColor: 'rgba(43, 49, 67, 0.5)',
-                        autoScale: true
-                    },
-                    timeScale: {
-                        borderColor: 'rgba(43, 49, 67, 0.5)',
-                        timeVisible: activeResolution !== '1d',
-                        secondsVisible: false
-                    }
-                });
+                if (!chartInstance) {
+                    // Clear old chart elements to rebuild on resolution/coin changes
+                    chartContainer.innerHTML = '';
+                    isFirstRender = true;
+                    
+                    chartInstance = LightweightCharts.createChart(chartContainer, {
+                        width: chartContainer.clientWidth,
+                        height: 520,
+                        layout: {
+                            background: { color: '#0d0e12' },
+                            textColor: '#a3a5b2',
+                            fontSize: 12,
+                            fontFamily: 'Outfit, sans-serif'
+                        },
+                        grid: {
+                            vertLines: { color: 'rgba(43, 49, 67, 0.3)' },
+                            horzLines: { color: 'rgba(43, 49, 67, 0.3)' }
+                        },
+                        crosshair: {
+                            mode: LightweightCharts.CrosshairMode.Normal
+                        },
+                        rightPriceScale: {
+                            borderColor: 'rgba(43, 49, 67, 0.5)',
+                            autoScale: true
+                        },
+                        timeScale: {
+                            borderColor: 'rgba(43, 49, 67, 0.5)',
+                            timeVisible: activeResolution !== '1d',
+                            secondsVisible: false
+                        }
+                    });
 
-                // Add Candlestick Series
-                candlestickSeries = chartInstance.addSeries(LightweightCharts.CandlestickSeries, {
-                    upColor: '#00e676',
-                    downColor: '#ff3d71',
-                    borderDownColor: '#ff3d71',
-                    borderUpColor: '#00e676',
-                    wickDownColor: '#ff3d71',
-                    wickUpColor: '#00e676'
-                });
+                    // Add Candlestick Series
+                    candlestickSeries = chartInstance.addSeries(LightweightCharts.CandlestickSeries, {
+                        upColor: '#00e676',
+                        downColor: '#ff3d71',
+                        borderDownColor: '#ff3d71',
+                        borderUpColor: '#00e676',
+                        wickDownColor: '#ff3d71',
+                        wickUpColor: '#00e676'
+                    });
+                } else {
+                    // Remove previous model series to avoid duplicates and memory leaks
+                    activeModelSeries.forEach(series => {
+                        try {
+                            chartInstance.removeSeries(series);
+                        } catch (e) {}
+                    });
+                    activeModelSeries = [];
+                }
 
                 // Format and load candlestick history
                 const rawHistory = globalPayload.history ? globalPayload.history[activeResolution] : [];
@@ -541,8 +563,10 @@
                         lineWidth: 2,
                         lineStyle: LightweightCharts.LineStyle.Dashed,
                         pointRadius: 4,
-                        title: modelName
+                        title: modelName,
+                        priceLineVisible: false // disable default price line to prevent duplicates
                     });
+                    activeModelSeries.push(lineSeries);
 
                     const rawPredHistory = globalPayload.prediction_history || [];
                     const modelNameKey = modelName === 'Transformer' ? 'Transformer' : modelName;
@@ -611,9 +635,11 @@
                     }
                 });
 
-                // Auto-fit content and scroll to the end
-                chartInstance.timeScale().fitContent();
-                chartInstance.timeScale().applyOptions({ rightOffset: 8 });
+                // Auto-fit content and scroll to the end ONLY on first load
+                if (isFirstRender) {
+                    chartInstance.timeScale().fitContent();
+                    chartInstance.timeScale().applyOptions({ rightOffset: 8 });
+                }
 
                 // Responsive resize
                 window.addEventListener('resize', () => {
