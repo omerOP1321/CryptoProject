@@ -86,7 +86,7 @@
                 try {
                     console.log(`[${new Date().toLocaleTimeString()}] Polling Supabase for new data...`);
                     // Using a dummy filter to bust aggressive browser caching
-                    const { data, error } = await supabase.from('predictions').select('payload').eq('id', 1).neq('id', Math.random()).single();
+                    const { data, error } = await supabase.from('predictions').select('payload').eq('id', 1).neq('id', Math.floor(Math.random() * 10000000)).single();
                     if (error) {
                         if (error.code === 'PGRST116') {
                             document.getElementById('loading').innerText = '⏳ Waiting for first prediction from Colab engine...';
