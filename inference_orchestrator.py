@@ -208,6 +208,8 @@ TFT_FEATURES = [
     'hour_sin', 'hour_cos'
 ]
 
+lstm_features = list(LSTM_FEATURES)
+
 # --- 4. Core Functions ---
 
 def fetch_latest_data(symbol, interval=INTERVAL, limit=1000):
@@ -280,16 +282,26 @@ def infer_arima(close_series):
             return float(close_series.iloc[-1])
 
 def initialize():
-    global df_hist_dict, scalers_dict, model_lstm, model_tft
+    global df_hist_dict, scalers_dict, model_lstm, model_tft, lstm_features
 
     print("\n[Init] Loading models into memory & moving to GPU...")
     lstm_path = os.path.join(MODEL_DIR, 'best_lstm_model.pth')
     if os.path.exists(lstm_path):
-        model_lstm = LSTMModel(input_size=len(LSTM_FEATURES))
-        model_lstm.load_state_dict(torch.load(lstm_path, map_location=DEVICE))
-        model_lstm.to(DEVICE)
-        model_lstm.eval()
-        print(f"   -> LSTM loaded on {DEVICE}.")
+        try:
+            state_dict = torch.load(lstm_path, map_location=DEVICE)
+            input_size = state_dict['lstm.weight_ih_l0'].shape[1]
+            print(f"   -> Detected LSTM checkpoint input size: {input_size} features.")
+            
+            # Slices features to match the exact size of the loaded checkpoint
+            lstm_features = TFT_FEATURES[:input_size]
+            
+            model_lstm = LSTMModel(input_size=input_size)
+            model_lstm.load_state_dict(state_dict)
+            model_lstm.to(DEVICE)
+            model_lstm.eval()
+            print(f"   -> LSTM loaded on {DEVICE}.")
+        except Exception as e:
+            print(f"   -> Failed to load LSTM model dynamically: {e}")
 
     tft_path = os.path.join(MODEL_DIR, 'best_tft_vsn.pth')
     if os.path.exists(tft_path):
@@ -315,7 +327,7 @@ def initialize():
 
             lstm_scaler = StandardScaler()
             tft_scaler = StandardScaler()
-            lstm_scaler.fit(df_train[LSTM_FEATURES])
+            lstm_scaler.fit(df_train[lstm_features])
             tft_scaler.fit(df_train[TFT_FEATURES])
             scalers_dict[symbol] = (lstm_scaler, tft_scaler)
             print("      -> Scalers fitted.")
@@ -355,6 +367,16 @@ def run_inference(symbol, db_id):
     global df_hist_dict
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching latest data for {symbol}...")
 
+    # Fetch existing prediction history from Supabase to append to it
+    existing_history = []
+    if supabase:
+        try:
+            res = supabase.table('predictions').select('payload').eq('id', db_id).execute()
+            if res.data and res.data[0].get('payload'):
+                existing_history = res.data[0]['payload'].get('prediction_history', [])
+        except Exception as e:
+            print(f"   -> Failed to fetch existing prediction history: {e}")
+
     df_hist = df_hist_dict[symbol]
     # 1. Fetch & Append Data
     df_new = fetch_latest_data(symbol)
@@ -377,7 +399,8 @@ def run_inference(symbol, db_id):
     results = {
         "timestamp": str(df_features['open_time'].iloc[-1]),
         "last_price": last_price,
-        "predictions": {}
+        "predictions": {},
+        "prediction_history": existing_history
     }
 
     l_band = df_features['bb_lband'].iloc[-1]
@@ -389,13 +412,13 @@ def run_inference(symbol, db_id):
         print("   -> ⚠️ Scalers not fitted. Fitting on the fly on available history...")
         lstm_scaler = StandardScaler()
         tft_scaler = StandardScaler()
-        lstm_scaler.fit(df_features[LSTM_FEATURES])
+        lstm_scaler.fit(df_features[lstm_features])
         tft_scaler.fit(df_features[TFT_FEATURES])
         scalers_dict[symbol] = (lstm_scaler, tft_scaler)
 
-    # 4. Infer LSTM (Expects 9 features)
+    # 4. Infer LSTM
     if model_lstm:
-        seq_lstm = df_features[LSTM_FEATURES].tail(SEQ_LENGTH).values
+        seq_lstm = df_features[lstm_features].tail(SEQ_LENGTH).values
         input_lstm = torch.tensor(lstm_scaler.transform(seq_lstm), dtype=torch.float32).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
             pred_log_ret = model_lstm(input_lstm).item()
@@ -439,6 +462,31 @@ def run_inference(symbol, db_id):
             max_pct = abs_change
             chosen = name
     results["chosen_model"] = chosen
+
+    # Update Prediction History
+    try:
+        last_time_dt = df_features['open_time'].iloc[-1]
+        target_time = int(last_time_dt.timestamp() + 900)  # +15 minutes (3 candles)
+
+        new_entry = {
+            "time": target_time,
+            "LSTM": results["predictions"]["LSTM"]["price"] if "LSTM" in results["predictions"] else None,
+            "ARIMA": results["predictions"]["ARIMA"]["price"] if "ARIMA" in results["predictions"] else None,
+            "Transformer": results["predictions"]["Transformer"]["price"] if "Transformer" in results["predictions"] else None
+        }
+
+        history_list = results.get("prediction_history", [])
+        history_df = pd.DataFrame(history_list)
+        if not history_df.empty:
+            # Drop entries where time or value keys might be completely null
+            history_df = pd.concat([history_df, pd.DataFrame([new_entry])])
+        else:
+            history_df = pd.DataFrame([new_entry])
+
+        history_df = history_df.drop_duplicates(subset=['time'], keep='last').sort_values('time')
+        results["prediction_history"] = history_df.tail(500).to_dict('records')
+    except Exception as e:
+        print(f"   -> Failed to update prediction history: {e}")
 
     # 8. Add History Aggregation (OHLC format for Candlestick charts with UNIX timestamp in seconds)
     try:
