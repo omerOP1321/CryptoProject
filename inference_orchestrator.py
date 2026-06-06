@@ -148,6 +148,63 @@ class LSTMModel(nn.Module):
         out = self.fc(out[:, -1, :])
         return out
 
+class Attention(nn.Module):
+    def __init__(self, hidden_dim):
+        super(Attention, self).__init__()
+        self.attention = nn.Linear(hidden_dim, 1, bias=False)
+
+    def forward(self, lstm_out):
+        import torch.nn.functional as F
+        attn_weights = F.softmax(self.attention(lstm_out), dim=1)
+        context = torch.sum(attn_weights * lstm_out, dim=1)
+        return context, attn_weights
+
+class LSTMModel_ETH(nn.Module):
+    def __init__(self, input_size, hidden_size=64, num_layers=2, dropout=0.1):
+        super(LSTMModel_ETH, self).__init__()
+        self.hidden_dim = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout)
+        self.attention = Attention(hidden_dim=hidden_size)
+        self.fc1 = nn.Linear(hidden_size, 32)
+        self.dropout = nn.Dropout(dropout)
+        self.fc2 = nn.Linear(32, 1)
+
+    def forward(self, x):
+        import torch.nn.functional as F
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device)
+        lstm_out, _ = self.lstm(x, (h0, c0))
+        context, _ = self.attention(lstm_out)
+        out = F.relu(self.fc1(context))
+        out = self.dropout(out)
+        out = self.fc2(out)
+        return torch.sigmoid(out)
+
+class LSTMModel_XRP(nn.Module):
+    def __init__(self, input_size, hidden_size=128, num_layers=2, dropout=0.1):
+        super(LSTMModel_XRP, self).__init__()
+        self.hidden_dim = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout)
+        self.norm = nn.LayerNorm(hidden_size * 2)
+        self.head = nn.Sequential(
+            nn.Linear(hidden_size * 2, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 1)
+        )
+
+    def forward(self, x):
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device)
+        out, _ = self.lstm(x, (h0, c0))
+        out_last = out[:, -1, :]
+        out_mean = out.mean(dim=1)
+        feat = torch.cat([out_last, out_mean], dim=-1)
+        feat = self.norm(feat)
+        return self.head(feat)
+
 class GLU(nn.Module):
     def __init__(self, input_size):
         super().__init__()
@@ -234,12 +291,13 @@ LSTM_FEATURES = [
     'bb_pband_change', 'volume', 'ma_dist'
 ]
 
-# Transformer / TFT features (14 features)
+# Transformer / TFT features (16 features)
 TFT_FEATURES = [
     'log_ret', 'rsi', 'rsi_change', 'rsi_accel', 'macd', 'macd_slope',
     'bb_pband_change', 'volume', 'ma_dist', 'volume_z', 'vol_spike', 'adx',
-    'hour_sin', 'hour_cos'
+    'hour_sin', 'hour_cos', 'mom_3', 'mom_5'
 ]
+
 
 # --- 4. Core Functions ---
 
@@ -327,6 +385,50 @@ def download_file_from_drive(service, filename, local_dest_path):
         print(f"   -> ❌ Failed to download '{filename}' from Drive: {e}")
         return False
 
+def fetch_missing_history(symbol, start_time_dt):
+    print(f"   -> Gap detected. Fetching missing historical candles since {start_time_dt}...")
+    start_ms = int(start_time_dt.timestamp() * 1000)
+    end_ms = int(datetime.now().timestamp() * 1000)
+    
+    all_dfs = []
+    current_start = start_ms
+    
+    while current_start < end_ms:
+        params = {
+            'symbol': symbol,
+            'interval': INTERVAL,
+            'limit': 1000,
+            'startTime': current_start
+        }
+        try:
+            response = requests.get(BASE_URL, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                if not data:
+                    break
+                cols = ['open_time', 'open', 'high', 'low', 'close', 'volume',
+                        'close_time', 'quote_asset_volume', 'number_of_trades',
+                        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore']
+                df = pd.DataFrame(data, columns=cols)
+                numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+                df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric)
+                df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+                all_dfs.append(df)
+                
+                last_close_ms = data[-1][6]
+                current_start = last_close_ms + 1
+                time.sleep(0.1)
+            else:
+                print(f"      -> ⚠️ Error fetching historical chunk: {response.text}")
+                break
+        except Exception as e:
+            print(f"      -> ⚠️ Request failed: {e}")
+            break
+            
+    if all_dfs:
+        return pd.concat(all_dfs)
+    return pd.DataFrame()
+
 def fetch_latest_data(symbol, interval=INTERVAL, limit=1000):
     params = {'symbol': symbol, 'interval': interval, 'limit': limit}
     response = requests.get(BASE_URL, params=params)
@@ -382,7 +484,12 @@ def calculate_features(df):
     df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
     df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
 
+    # Momentum features
+    df['mom_3'] = df['close'] / df['close'].shift(3) - 1
+    df['mom_5'] = df['close'] / df['close'].shift(5) - 1
+
     return df.dropna()
+
 
 def infer_arima(close_series):
     with warnings.catch_warnings():
@@ -452,7 +559,17 @@ def initialize():
                 input_size = state_dict['lstm.weight_ih_l0'].shape[1]
                 print(f"   -> Detected LSTM checkpoint for {symbol} (path: {os.path.basename(lstm_path)}) input size: {input_size} features.")
                 
-                model_lstm = LSTMModel(input_size=input_size)
+                # Check architecture based on state_dict keys
+                if 'attention.attention.weight' in state_dict:
+                    print(f"      -> Instantiating LSTMModel_ETH (Attention + MLP) for {symbol}")
+                    model_lstm = LSTMModel_ETH(input_size=input_size)
+                elif 'norm.weight' in state_dict:
+                    print(f"      -> Instantiating LSTMModel_XRP (LayerNorm + MLP) for {symbol}")
+                    model_lstm = LSTMModel_XRP(input_size=input_size)
+                else:
+                    print(f"      -> Instantiating standard LSTMModel for {symbol}")
+                    model_lstm = LSTMModel(input_size=input_size)
+
                 model_lstm.load_state_dict(state_dict)
                 model_lstm.to(DEVICE)
                 model_lstm.eval()
@@ -471,12 +588,18 @@ def initialize():
             
         if os.path.exists(tft_path):
             try:
-                model_tft = TFTModel(input_dim=len(TFT_FEATURES), num_vars=len(TFT_FEATURES))
-                model_tft.load_state_dict(torch.load(tft_path, map_location=DEVICE))
+                state_dict = torch.load(tft_path, map_location=DEVICE)
+                d_model = state_dict['pos_encoder.pe'].shape[-1]
+                num_vars = state_dict['vsn.selector_grn.layer_norm.weight'].shape[0]
+                tft_features_subset = TFT_FEATURES[:num_vars]
+                
+                print(f"   -> Detected TFT checkpoint for {symbol} (path: {os.path.basename(tft_path)}) with d_model: {d_model}, num_vars: {num_vars}")
+                model_tft = TFTModel(input_dim=num_vars, num_vars=num_vars, d_model=d_model)
+                model_tft.load_state_dict(state_dict)
                 model_tft.to(DEVICE)
                 model_tft.eval()
-                models_tft[symbol] = model_tft
-                print(f"   -> Transformer model for {symbol} loaded on {DEVICE} (path: {os.path.basename(tft_path)}).")
+                models_tft[symbol] = (model_tft, num_vars, tft_features_subset)
+                print(f"   -> Transformer model for {symbol} loaded on {DEVICE}.")
             except Exception as e:
                 print(f"   -> Failed to load TFT model for {symbol}: {e}")
         else:
@@ -489,6 +612,19 @@ def initialize():
         if os.path.exists(csv_path):
             df_hist = pd.read_csv(csv_path)
             df_hist['open_time'] = pd.to_datetime(df_hist['open_time'])
+            
+            # Check for gap between last row in CSV and current time
+            if not df_hist.empty:
+                last_time = df_hist['open_time'].iloc[-1]
+                time_diff = datetime.now() - last_time
+                if time_diff.total_seconds() > 600:
+                    df_missing = fetch_missing_history(symbol, last_time)
+                    if not df_missing.empty:
+                        df_hist = pd.concat([df_hist, df_missing]).drop_duplicates(subset=['open_time'], keep='last').sort_values('open_time')
+                        # Save the updated history back to CSV to preserve it
+                        df_hist.to_csv(csv_path, index=False)
+                        print(f"      -> Synced {len(df_missing)} missing candles and updated local CSV.")
+
             df_hist_dict[symbol] = df_hist
             print(f"   -> Loaded {len(df_hist)} historical rows.")
 
@@ -505,15 +641,24 @@ def initialize():
             else:
                 lstm_features_subset = LSTM_FEATURES # fallback
 
+            tft_info = models_tft.get(symbol)
+            if tft_info is not None:
+                _, num_vars, tft_features_subset = tft_info
+            else:
+                tft_features_subset = TFT_FEATURES[:14] # fallback
+
             lstm_scaler = StandardScaler()
             tft_scaler = StandardScaler()
             lstm_scaler.fit(df_train[lstm_features_subset])
-            tft_scaler.fit(df_train[TFT_FEATURES])
-            scalers_dict[symbol] = (lstm_scaler, tft_scaler, lstm_features_subset)
-            print(f"      -> Scalers fitted (LSTM features: {len(lstm_features_subset)}).")
+            tft_scaler.fit(df_train[tft_features_subset])
+            scalers_dict[symbol] = (lstm_scaler, tft_scaler, lstm_features_subset, tft_features_subset)
+            print(f"      -> Scalers fitted (LSTM features: {len(lstm_features_subset)}, TFT features: {len(tft_features_subset)}).")
         else:
             print(f"   -> ⚠️ No historical data found for {symbol}! Will initialize from live fetch.")
-            df_hist_dict[symbol] = pd.DataFrame()
+            df_hist = fetch_latest_data(symbol, limit=1000)
+            df_hist_dict[symbol] = df_hist
+            df_hist.to_csv(csv_path, index=False)
+            print(f"      -> Fetched and cached {len(df_hist)} latest candles.")
 
 def save_data_to_drive():
     for symbol, df_hist in df_hist_dict.items():
@@ -589,7 +734,7 @@ def run_inference(symbol, db_id):
     # Load cached scalers
     scaler_info = scalers_dict.get(symbol)
     if scaler_info is not None:
-        lstm_scaler, tft_scaler, lstm_features_subset = scaler_info
+        lstm_scaler, tft_scaler, lstm_features_subset, tft_features_subset = scaler_info
     else:
         print("   -> ⚠️ Scalers not fitted. Fitting on the fly on available history...")
         lstm_info = models_lstm.get(symbol)
@@ -599,11 +744,17 @@ def run_inference(symbol, db_id):
         else:
             lstm_features_subset = LSTM_FEATURES
         
+        tft_info = models_tft.get(symbol)
+        if tft_info is not None:
+            _, num_vars, tft_features_subset = tft_info
+        else:
+            tft_features_subset = TFT_FEATURES[:14]
+
         lstm_scaler = StandardScaler()
         tft_scaler = StandardScaler()
         lstm_scaler.fit(df_features[lstm_features_subset])
-        tft_scaler.fit(df_features[TFT_FEATURES])
-        scalers_dict[symbol] = (lstm_scaler, tft_scaler, lstm_features_subset)
+        tft_scaler.fit(df_features[tft_features_subset])
+        scalers_dict[symbol] = (lstm_scaler, tft_scaler, lstm_features_subset, tft_features_subset)
 
     # 4. Infer LSTM
     lstm_info = models_lstm.get(symbol)
@@ -612,19 +763,25 @@ def run_inference(symbol, db_id):
         seq_lstm = df_features[lstm_features_subset].tail(SEQ_LENGTH).values
         input_lstm = torch.tensor(lstm_scaler.transform(seq_lstm), dtype=torch.float32).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
-            pred_log_ret = lstm_model_obj(input_lstm).item()
+            pred_val = lstm_model_obj(input_lstm).item()
 
-        pred_price_lstm = last_price * math.exp(pred_log_ret)
+        # Reconstruct LSTM price: %B target for ETHUSDT, log returns for others
+        if symbol == 'ETHUSDT':
+            pred_price_lstm = l_band + (pred_val * (h_band - l_band))
+        else:
+            pred_price_lstm = last_price * math.exp(pred_val)
+
         results["predictions"]["LSTM"] = {
-            "val": pred_log_ret,
+            "val": pred_val,
             "price": pred_price_lstm,
             "change_pct": (pred_price_lstm - last_price) / last_price * 100
         }
 
-    # 5. Infer Transformer (Expects 14 features)
-    tft_model_obj = models_tft.get(symbol)
-    if tft_model_obj is not None:
-        seq_tft = df_features[TFT_FEATURES].tail(SEQ_LENGTH).values
+    # 5. Infer Transformer
+    tft_info = models_tft.get(symbol)
+    if tft_info is not None:
+        tft_model_obj, num_vars, tft_features_subset = tft_info
+        seq_tft = df_features[tft_features_subset].tail(SEQ_LENGTH).values
         input_tft = torch.tensor(tft_scaler.transform(seq_tft), dtype=torch.float32).unsqueeze(0).to(DEVICE)
         with torch.no_grad():
             pred_bb = tft_model_obj(input_tft).item()

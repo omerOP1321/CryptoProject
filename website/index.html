@@ -571,22 +571,53 @@
                     const rawPredHistory = globalPayload.prediction_history || [];
                     const modelNameKey = modelName === 'Transformer' ? 'Transformer' : modelName;
 
-                    const modelData = rawPredHistory.map(item => ({
-                        time: item.time,
+                    let modelData = rawPredHistory.map(item => ({
+                        time: Number(item.time),
                         value: item[modelNameKey]
-                    })).filter(item => item.value !== undefined && item.value !== null)
-                      .sort((a, b) => a.time - b.time);
+                    })).filter(item => item.value !== undefined && item.value !== null);
 
                     if (modelData.length > 0) {
+                        // Resample based on resolution to prevent spacing gaps in Lightweight Charts
+                        if (activeResolution === '1h') {
+                            const grouped = {};
+                            modelData.forEach(item => {
+                                const roundedHour = Math.round(item.time / 3600) * 3600;
+                                grouped[roundedHour] = item.value;
+                            });
+                            modelData = Object.keys(grouped).map(t => ({
+                                time: parseInt(t),
+                                value: grouped[t]
+                            })).sort((a, b) => a.time - b.time);
+                        } else if (activeResolution === '1d') {
+                            const grouped = {};
+                            modelData.forEach(item => {
+                                const dateStr = new Date(item.time * 1000).toISOString().split('T')[0];
+                                grouped[dateStr] = item.value;
+                            });
+                            modelData = Object.keys(grouped).map(t => ({
+                                time: t,
+                                value: grouped[t]
+                            })).sort((a, b) => a.time.localeCompare(b.time));
+                        } else {
+                            // 5m
+                            modelData = modelData.sort((a, b) => a.time - b.time);
+                        }
+
+                        // Append the final live prediction point at futureTime
+                        const lastPoint = modelData[modelData.length - 1];
+                        if (lastPoint.time !== futureTime) {
+                            modelData.push({ time: futureTime, value: predPrice });
+                        } else {
+                            lastPoint.value = predPrice;
+                        }
+
                         lineSeries.setData(modelData);
 
-                        const latestPred = modelData[modelData.length - 1];
-                        const latestTime = latestPred.time;
-                        const latestValue = latestPred.value;
+                        const finalPoint = modelData[modelData.length - 1];
 
                         // Add Y-Axis Price Badge
                         lineSeries.createPriceLine({
-                            price: latestValue,
+                            price: finalPoint.value,
                             color: color,
                             lineWidth: 2,
                             lineStyle: LightweightCharts.LineStyle.Dotted,
@@ -597,7 +628,7 @@
                         // Add circular target marker ONLY at the final future coordinate
                         LightweightCharts.createSeriesMarkers(lineSeries, [
                             {
-                                time: latestTime,
+                                time: finalPoint.time,
                                 position: 'inBar',
                                 color: changePct > 0 ? '#00e676' : '#ff3d71',
                                 shape: 'circle',
