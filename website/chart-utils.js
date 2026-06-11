@@ -89,10 +89,80 @@
         return { avg: sum / recent.length, count: recent.length };
     }
 
+    /*
+     * Combined accuracy stats for a model over a time window.
+     *
+     * Relative error: |predicted - actual| / actual * 100, averaged.
+     * Directional accuracy: % of predictions whose direction matched the
+     * actual move. A prediction targeting time t was made 900s (3 candles)
+     * earlier, so the baseline price is the candle close at t-600; the
+     * predicted/actual moves are both measured from that baseline.
+     * Zero moves carry no direction and are excluded from the tally.
+     *
+     * opts: { fromSec, toSec, lastN } - window bounds (unix sec, inclusive)
+     * and a cap on how many of the most recent matured predictions count.
+     * Returns { avgError, errorCount, dirAccuracy, dirCount }.
+     */
+    function computeModelStats(predHist, hist5m, modelName, opts) {
+        opts = opts || {};
+        var lastN = opts.lastN === undefined ? 20 : opts.lastN;
+        var fromSec = opts.fromSec === undefined ? -Infinity : opts.fromSec;
+        var toSec = opts.toSec === undefined ? Infinity : opts.toSec;
+        var empty = { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 };
+        if (!Array.isArray(predHist) || !Array.isArray(hist5m) || hist5m.length === 0) {
+            return empty;
+        }
+        var closeAt = new Map(hist5m.map(function (c) { return [c.time + 300, c.c]; }));
+        var lastCandleTime = hist5m[hist5m.length - 1].time;
+
+        var matured = [];
+        predHist.forEach(function (entry) {
+            var raw = entry[modelName];
+            var pred = Number(raw);
+            if (raw === null || raw === undefined || !Number.isFinite(pred)) return;
+            var t = Number(entry.time);
+            if (!Number.isFinite(t) || t > lastCandleTime || t < fromSec || t > toSec) return;
+            var actual = closeAt.get(t);
+            if (actual === undefined) actual = closeAt.get(t - 300);
+            if (actual === undefined) actual = closeAt.get(t + 300);
+            if (actual === undefined || actual <= 0) return;
+            var base = closeAt.get(t - 600);
+            if (base === undefined) base = closeAt.get(t - 900);
+            matured.push({
+                err: Math.abs(pred - actual) / actual * 100,
+                pred: pred,
+                actual: actual,
+                base: base
+            });
+        });
+
+        var recent = matured.slice(-lastN);
+        if (recent.length === 0) return empty;
+
+        var errSum = 0, dirHits = 0, dirTotal = 0;
+        recent.forEach(function (m) {
+            errSum += m.err;
+            if (m.base === undefined || m.base <= 0) return;
+            var predMove = m.pred - m.base;
+            var actMove = m.actual - m.base;
+            if (predMove === 0 || actMove === 0) return;
+            dirTotal++;
+            if ((predMove > 0) === (actMove > 0)) dirHits++;
+        });
+
+        return {
+            avgError: errSum / recent.length,
+            errorCount: recent.length,
+            dirAccuracy: dirTotal > 0 ? dirHits / dirTotal * 100 : null,
+            dirCount: dirTotal
+        };
+    }
+
     return {
         toMs: toMs,
         filterSanePoints: filterSanePoints,
         insertGapBreaks: insertGapBreaks,
-        computeModelErrors: computeModelErrors
+        computeModelErrors: computeModelErrors,
+        computeModelStats: computeModelStats
     };
 }));
