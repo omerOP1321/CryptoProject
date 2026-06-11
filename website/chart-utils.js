@@ -179,12 +179,29 @@
         };
     }
 
+    /*
+     * Logical visible range for "recent focus" auto-scale: show the most recent
+     * `focusBars` candles plus `rightOffset` bars of empty space on the right so
+     * the future prediction target is visible. Bars are indexed 0..barCount-1.
+     * Returns { from, to } for setVisibleLogicalRange, or null if there's no data.
+     */
+    function recentFocusRange(barCount, focusBars, rightOffset) {
+        if (!barCount || barCount <= 0) return null;
+        focusBars = focusBars || 48;
+        rightOffset = rightOffset || 0;
+        return {
+            from: Math.max(0, barCount - focusBars),
+            to: barCount - 1 + rightOffset
+        };
+    }
+
     return {
         toMs: toMs,
         filterSanePoints: filterSanePoints,
         insertGapBreaks: insertGapBreaks,
         computeModelErrors: computeModelErrors,
         computeModelStats: computeModelStats,
-        splitAtGaps: splitAtGaps
+        splitAtGaps: splitAtGaps,
+        recentFocusRange: recentFocusRange
     };
 }));

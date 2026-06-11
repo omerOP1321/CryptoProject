@@ -326,7 +326,6 @@
                     <button class="btn" data-range="12H" onclick="setRange('12H', this)">12H</button>
                     <button class="btn active" data-range="24H" onclick="setRange('24H', this)">24H</button>
                     <button class="btn" data-range="7D" onclick="setRange('7D', this)">7D</button>
-                    <button class="btn" data-range="30D" onclick="setRange('30D', this)">30D</button>
                     <button class="btn" data-range="custom" onclick="setRange('custom', this)">Custom</button>
                 </div>
 
@@ -374,7 +373,7 @@
         </div>
 
         <div class="footer">
-            <span>Updating every 30 seconds. All model targets predict 5 minutes ahead (3 candles of 5m). Hover on chart for OHLC values.</span>
+            <span>Updating every 30 seconds. All model targets predict 15 minutes ahead (3 candles of 5m). Hover on chart for OHLC values.</span>
             <span>Powered by Supabase & TradingView</span>
         </div>
     </div>
@@ -390,22 +389,29 @@
         let visibleModels = ['LSTM', 'Transformer', 'ARIMA'];
 
         // Time range selection. The candle resolution is derived from the range:
-        // short ranges use 5m candles, longer ones 1h, very long custom ones 1d.
+        // All ranges render 5-minute candles. Max preset is 7D because the backend
+        // keeps 7 days of 5m candles (2016) and predictions are pruned at 7 days.
         const RANGES = {
             '1H': 3600, '6H': 6 * 3600, '12H': 12 * 3600,
-            '24H': 24 * 3600, '7D': 7 * 86400, '30D': 30 * 86400
+            '24H': 24 * 3600, '7D': 7 * 86400
         };
         let activeRange = localStorage.getItem('activeRange') || '24H';
         if (!RANGES[activeRange] && activeRange !== 'custom') activeRange = '24H';
         let customFromSec = null;
         let customToSec = null;
-        let activeResolution = '5m'; // derived in renderDashboard, kept for chart options
+        const activeResolution = '5m'; // candles are always 5m, every range
         
         let globalPayload = null;
         let chartInstance = null;
         let candlestickSeries = null;
         let activeModelSeries = [];
         let lastRenderKey = '';
+        let lastBarCount = 0;          // candles in the current view (for recent-focus auto scale)
+
+        // Recent-focus Auto Scale: show the latest ~4h of 5m candles, with room on
+        // the right for the +15min prediction target, so live changes stay readable.
+        const FOCUS_BARS = 48;
+        const RIGHT_OFFSET = 5;
 
         // Auto Scale: persisted across page loads, default ON
         let autoScaleEnabled = localStorage.getItem('autoScaleEnabled') !== 'false';
@@ -494,15 +500,6 @@
                 return [endSec - span, endSec];
             }
 
-            // Finest candle set that covers the span: 5m history holds ~41h,
-            // 1h history holds 30 days, 1d covers everything.
-            function resolutionForRange(fromSec, toSec) {
-                const span = toSec - fromSec;
-                if (span <= 36 * 3600) return '5m';
-                if (span <= 31 * 86400) return '1h';
-                return '1d';
-            }
-
             function updateRangeButtons() {
                 document.querySelectorAll('.btn[data-range]').forEach(b =>
                     b.classList.toggle('active', b.dataset.range === activeRange));
@@ -516,7 +513,7 @@
                 updateRangeButtons();
                 // Custom waits for the user to pick bounds and hit Apply
                 if (range === 'custom' && (!customFromSec || !customToSec)) return;
-                chartInstance = null; // force recreation + fitContent for the new window
+                chartInstance = null; // force recreation + recent-focus for the new window
                 renderDashboard();
             }
 
@@ -542,6 +539,19 @@
                 btn.classList.toggle('active', autoScaleEnabled);
             }
 
+            // Focus the view on the most recent FOCUS_BARS candles, anchored at the
+            // right edge with room for the future prediction target. The price scale's
+            // autoScale then fits Y to just this visible window, so small prediction
+            // changes stay large and readable instead of being compressed.
+            function applyRecentFocus() {
+                if (!chartInstance || !lastBarCount) return;
+                const r = ChartUtils.recentFocusRange(lastBarCount, FOCUS_BARS, RIGHT_OFFSET);
+                if (r) {
+                    chartInstance.timeScale().applyOptions({ rightOffset: RIGHT_OFFSET });
+                    chartInstance.timeScale().setVisibleLogicalRange(r);
+                }
+            }
+
             function toggleAutoScale() {
                 autoScaleEnabled = !autoScaleEnabled;
                 localStorage.setItem('autoScaleEnabled', String(autoScaleEnabled));
@@ -549,10 +559,9 @@
                 if (chartInstance) {
                     chartInstance.priceScale('right').applyOptions({ autoScale: autoScaleEnabled });
                     if (autoScaleEnabled) {
-                        // ON: snap the whole view to all candles + model predictions
-                        // (incl. the future targets), then keep following on updates.
-                        chartInstance.timeScale().fitContent();
-                        chartInstance.timeScale().applyOptions({ rightOffset: 8 });
+                        // ON: zoom to the recent window so live prediction changes are
+                        // clearly visible (NOT the whole selected period).
+                        applyRecentFocus();
                     }
                     // OFF: leave the current zoom/pan and Y-range exactly as they are.
                 }
@@ -586,11 +595,6 @@
                 renderDashboard();
             }
 
-            function addDays(dateStr, days) {
-                const date = new Date(dateStr);
-                date.setDate(date.getDate() + days);
-                return date.toISOString().split('T')[0];
-            }
 
             // Per-model accuracy over the selected time window:
             // - relative error: |predicted - actual| / actual, averaged
@@ -644,28 +648,15 @@
                 const dataEndSec = last5m || last1h || Math.floor(Date.now() / 1000);
 
                 const [rangeFromSec, rangeToSec] = rangeWindow(dataEndSec);
-                activeResolution = resolutionForRange(rangeFromSec, rangeToSec);
 
-                // Build the candle set for the window. If the preferred resolution's
-                // data doesn't reach back far enough (5m holds ~41h), fall back to
-                // a coarser series that covers the requested period.
-                const buildHistory = res => ((globalPayload.history && globalPayload.history[res]) || [])
+                // Always 5-minute candles, filtered to the selected window
+                const formattedHistory = ((globalPayload.history && globalPayload.history['5m']) || [])
                     .map(item => ({ time: item.time, open: item.o, high: item.h, low: item.l, close: item.c }))
                     .filter(item => {
                         const ms = ChartUtils.toMs(item.time);
                         return ms >= rangeFromSec * 1000 && ms <= rangeToSec * 1000;
                     })
-                    .sort((a, b) => (typeof a.time === 'string' ? a.time.localeCompare(b.time) : a.time - b.time));
-
-                let formattedHistory = buildHistory(activeResolution);
-                if (formattedHistory.length === 0 && activeResolution === '5m') {
-                    activeResolution = '1h';
-                    formattedHistory = buildHistory('1h');
-                }
-                if (formattedHistory.length === 0 && activeResolution === '1h') {
-                    activeResolution = '1d';
-                    formattedHistory = buildHistory('1d');
-                }
+                    .sort((a, b) => a.time - b.time);
 
                 // Skip identical re-renders (the 30s poll usually returns unchanged
                 // data) - prevents series churn and scale jitter on live updates
@@ -733,7 +724,7 @@
                         },
                         timeScale: {
                             borderColor: 'rgba(43, 49, 67, 0.5)',
-                            timeVisible: activeResolution !== '1d',
+                            timeVisible: true,
                             secondsVisible: false
                         }
                     });
@@ -767,20 +758,14 @@
                 }
 
                 candlestickSeries.setData(formattedHistory);
+                lastBarCount = formattedHistory.length;
 
                 const lastCandle = formattedHistory[formattedHistory.length - 1];
                 const lastTime = lastCandle.time;
                 const lastClose = lastCandle.close;
 
-                // Calculate future prediction timestamp based on resolution
-                let futureTime;
-                if (activeResolution === '5m') {
-                    futureTime = lastTime + 900; // +15 mins
-                } else if (activeResolution === '1h') {
-                    futureTime = lastTime + 10800; // +3 hours
-                } else { // 1d
-                    futureTime = addDays(lastTime, 3); // +3 days
-                }
+                // Prediction target is 3 candles (15 min) ahead of the last 5m candle
+                const futureTime = lastTime + 900;
 
                 // Render Active Models Overlay (Continuous History + Future target)
                 visibleModels.forEach(modelName => {
@@ -809,15 +794,14 @@
 
                     const rawPredHistory = globalPayload.prediction_history || [];
 
-                    const intervalSec = activeResolution === '5m' ? 300 : (activeResolution === '1h' ? 3600 : 86400);
-                    const maxGapMs = 3 * intervalSec * 1000;
+                    const intervalSec = 300;                 // always 5m candles
+                    const maxGapMs = 3 * intervalSec * 1000; // break the line after >15 min offline
                     const toMs = ChartUtils.toMs;
 
                     // Candle close lookup, used to discard history points that are far
                     // from the market (garbage left over from old engine versions)
                     const closeByTime = new Map(formattedHistory.map(c => [c.time, c.close]));
                     const nearestClose = (t) => {
-                        if (activeResolution === '1d') return closeByTime.get(t);
                         for (const dt of [0, -1, 1, -2, 2, -3, 3]) {
                             const c = closeByTime.get(t + dt * intervalSec);
                             if (c !== undefined) return c;
@@ -825,40 +809,17 @@
                         return undefined;
                     };
 
+                    // Points inside the visible window, strictly before the last candle
+                    // (the live prediction is drawn separately), sorted by time
+                    const firstCandleMs = toMs(formattedHistory[0].time);
+                    const lastCandleMs = toMs(lastTime);
                     let modelData = rawPredHistory.map(item => ({
                         time: Number(item.time),
                         value: item[modelName]
-                    })).filter(item => item.value !== undefined && item.value !== null);
-
-                    // 1. Keep only history points inside the visible candle window and
-                    //    strictly before the last candle (the live prediction is drawn separately)
-                    const firstCandleMs = toMs(formattedHistory[0].time);
-                    const lastCandleMs = toMs(lastTime);
-                    modelData = modelData.filter(item =>
-                        item.time * 1000 >= firstCandleMs && item.time * 1000 < lastCandleMs);
-
-                    // 2. Resample to the active resolution grid
-                    if (activeResolution === '1h') {
-                        const grouped = {};
-                        modelData.forEach(item => {
-                            grouped[Math.round(item.time / 3600) * 3600] = item.value;
-                        });
-                        modelData = Object.keys(grouped).map(t => ({
-                            time: parseInt(t),
-                            value: grouped[t]
-                        })).sort((a, b) => a.time - b.time);
-                    } else if (activeResolution === '1d') {
-                        const grouped = {};
-                        modelData.forEach(item => {
-                            grouped[new Date(item.time * 1000).toISOString().split('T')[0]] = item.value;
-                        });
-                        modelData = Object.keys(grouped).map(t => ({
-                            time: t,
-                            value: grouped[t]
-                        })).sort((a, b) => a.time.localeCompare(b.time));
-                    } else {
-                        modelData = modelData.sort((a, b) => a.time - b.time);
-                    }
+                    })).filter(item =>
+                        item.value !== undefined && item.value !== null &&
+                        item.time * 1000 >= firstCandleMs && item.time * 1000 < lastCandleMs
+                    ).sort((a, b) => a.time - b.time);
 
                     // 3. Sanity filter: drop points more than 5% away from the candle close
                     //    at that time (a 15-minute-ahead prediction is never that far off)
@@ -936,17 +897,23 @@
                 window.__chart = chartInstance;
 
                 if (autoScaleEnabled) {
-                    // ON: re-fit the whole view on EVERY render so all candles, model
-                    // lines and future prediction targets stay visible and the view
-                    // follows live updates. (Manual axis dragging silently disables the
-                    // library's autoScale, so we also re-assert it here.)
+                    // ON (recent-focus live mode): Y auto-fits the VISIBLE region only,
+                    // not the whole selected period. (Manual axis dragging silently
+                    // disables the library autoScale, so re-assert it each render.)
                     chartInstance.priceScale('right').applyOptions({ autoScale: true });
-                    chartInstance.timeScale().fitContent();
-                    chartInstance.timeScale().applyOptions({ rightOffset: 8 });
+                    if (isFirstRender) {
+                        // Fresh chart (range/coin change): zoom to the most recent window
+                        // so recent candles + predictions are large and readable.
+                        applyRecentFocus();
+                    } else {
+                        // Live update on the same chart: keep the newest candle and
+                        // prediction pinned at the right edge, preserving the zoom.
+                        chartInstance.timeScale().scrollToRealTime();
+                    }
                 } else if (isFirstRender) {
-                    // OFF: frame the data once on first paint, then hand control to the user
+                    // OFF: one-time overview of the whole selected range, then manual control
                     chartInstance.timeScale().fitContent();
-                    chartInstance.timeScale().applyOptions({ rightOffset: 8 });
+                    chartInstance.timeScale().applyOptions({ rightOffset: RIGHT_OFFSET });
                 }
 
             }

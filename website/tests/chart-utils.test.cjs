@@ -6,7 +6,29 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const ChartUtils = require('../chart-utils.js');
 
-const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors, computeModelStats, splitAtGaps } = ChartUtils;
+const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors, computeModelStats, splitAtGaps, recentFocusRange } = ChartUtils;
+
+// ----------------------------------------------------- recentFocusRange
+
+test('recentFocusRange shows the last focusBars + rightOffset for a long series', () => {
+    // 288 candles (24h of 5m), focus 48 (4h), 5 bars of right padding
+    assert.deepStrictEqual(recentFocusRange(288, 48, 5), { from: 240, to: 292 });
+});
+
+test('recentFocusRange clamps "from" to 0 when fewer candles than focusBars', () => {
+    // 12 candles (1H), focus window 48 -> show all from 0
+    assert.deepStrictEqual(recentFocusRange(12, 48, 5), { from: 0, to: 16 });
+});
+
+test('recentFocusRange returns null for empty data', () => {
+    assert.strictEqual(recentFocusRange(0, 48, 5), null);
+    assert.strictEqual(recentFocusRange(undefined, 48, 5), null);
+});
+
+test('recentFocusRange applies defaults for focusBars and rightOffset', () => {
+    // default focusBars 48, rightOffset 0
+    assert.deepStrictEqual(recentFocusRange(100), { from: 52, to: 99 });
+});
 
 // -------------------------------------------------------- splitAtGaps
 

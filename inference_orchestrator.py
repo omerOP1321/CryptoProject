@@ -839,8 +839,9 @@ def run_inference(symbol, db_id):
 
     # 8. Add History Aggregation (OHLC format for Candlestick charts with UNIX timestamp in seconds)
     try:
-        # 5m: Last 500 candles
-        h5 = df_hist.tail(500)[['open_time', 'open', 'high', 'low', 'close']].copy()
+        # 5m: last 2016 candles = 7 days (matches the 7-day prediction retention,
+        # so the dashboard can show genuine 5m candles for every range up to 7D)
+        h5 = df_hist.tail(2016)[['open_time', 'open', 'high', 'low', 'close']].copy()
         h5['time'] = h5['open_time'].astype('datetime64[s]').astype(np.int64)
         hist_5m = h5[['time', 'open', 'high', 'low', 'close']].rename(
             columns={'open':'o', 'high':'h', 'low':'l', 'close':'c'}
