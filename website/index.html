@@ -138,6 +138,14 @@
             font-weight: 700;
         }
 
+        .error-samples {
+            display: block;
+            margin-top: 4px;
+            font-size: 0.72em;
+            color: var(--text-muted);
+            letter-spacing: 0.3px;
+        }
+
         .signal-long { color: var(--green); text-shadow: 0 0 10px rgba(0, 230, 118, 0.2); }
         .signal-short { color: var(--red); text-shadow: 0 0 10px rgba(255, 61, 113, 0.2); }
         .signal-neutral { color: var(--text-muted); }
@@ -292,6 +300,9 @@
                 <div class="metric"><small>Expected Change (next 15 min)</small><b id="change-pct">+0.00%</b></div>
                 <div class="metric"><small>Signal Recommendation</small><b id="signal">NEUTRAL</b></div>
             </div>
+
+            <!-- Per-model recent accuracy (relative error of matured predictions) -->
+            <div class="metrics" id="error-metrics"></div>
 
             <!-- Controls Panel -->
             <div class="controls-panel">
@@ -449,6 +460,59 @@
                 return date.toISOString().split('T')[0];
             }
 
+            // Average relative error of each model's matured predictions:
+            // |predicted - actual| / actual * 100, over the last 20 predictions
+            // whose target time has already passed. Actual price = close of the
+            // 5m candle that closes at the prediction's target timestamp.
+            function renderModelErrors() {
+                const container = document.getElementById('error-metrics');
+                const hist5m = (globalPayload.history && globalPayload.history['5m']) || [];
+                const predHist = globalPayload.prediction_history || [];
+
+                if (hist5m.length === 0) {
+                    container.innerHTML = '';
+                    return;
+                }
+
+                // Candle opening at t covers t..t+300, so its close is the price at t+300
+                const closeAt = new Map(hist5m.map(c => [c.time + 300, c.c]));
+                const lastCandleTime = hist5m[hist5m.length - 1].time;
+
+                const cards = [];
+                Object.keys(MODEL_COLORS).forEach(modelName => {
+                    if (!globalPayload.predictions || !globalPayload.predictions[modelName]) return;
+
+                    const errors = [];
+                    predHist.forEach(entry => {
+                        const pred = entry[modelName];
+                        if (pred === null || pred === undefined) return;
+                        const t = Number(entry.time);
+                        if (t > lastCandleTime) return; // prediction not matured yet
+                        const actual = closeAt.get(t) ?? closeAt.get(t - 300) ?? closeAt.get(t + 300);
+                        if (actual === undefined) return;
+                        errors.push(Math.abs(pred - actual) / actual * 100);
+                    });
+
+                    const recent = errors.slice(-20);
+                    const label = modelName === 'Transformer' ? 'TFT' : modelName;
+                    const color = MODEL_COLORS[modelName];
+                    const value = recent.length
+                        ? (recent.reduce((a, b) => a + b, 0) / recent.length).toFixed(2) + '%'
+                        : '—';
+                    const note = recent.length
+                        ? `avg of last ${recent.length} prediction${recent.length > 1 ? 's' : ''}`
+                        : 'no matured predictions yet';
+
+                    cards.push(
+                        `<div class="metric"><small>${label} Relative Error</small>` +
+                        `<b style="color:${color}">${value}</b>` +
+                        `<span class="error-samples">${note}</span></div>`
+                    );
+                });
+
+                container.innerHTML = cards.join('');
+            }
+
             function renderDashboard() {
                 if (!globalPayload) return;
                 document.getElementById('loading').style.display = 'none';
@@ -473,6 +537,9 @@
                     else if (changePct < -0.1) { signalElem.innerText = 'SHORT 🔴'; signalElem.className = 'signal-short'; }
                     else { signalElem.innerText = 'NEUTRAL ⚪'; signalElem.className = 'signal-neutral'; }
                 }
+
+                // 1b. Render per-model relative error cards
+                renderModelErrors();
 
                 // 2. Initialize or Update TradingView Chart
                 const chartContainer = document.getElementById('chart-area-target');
