@@ -581,101 +581,115 @@
                     activeModelSeries.push(lineSeries);
 
                     const rawPredHistory = globalPayload.prediction_history || [];
-                    const modelNameKey = modelName === 'Transformer' ? 'Transformer' : modelName;
+
+                    const intervalSec = activeResolution === '5m' ? 300 : (activeResolution === '1h' ? 3600 : 86400);
+                    const maxGapMs = 3 * intervalSec * 1000;
+                    const toMs = t => (typeof t === 'string' ? Date.parse(t) : t * 1000);
+
+                    // Candle close lookup, used to discard history points that are far
+                    // from the market (garbage left over from old engine versions)
+                    const closeByTime = new Map(formattedHistory.map(c => [c.time, c.close]));
+                    const nearestClose = (t) => {
+                        if (activeResolution === '1d') return closeByTime.get(t);
+                        for (const dt of [0, -1, 1, -2, 2, -3, 3]) {
+                            const c = closeByTime.get(t + dt * intervalSec);
+                            if (c !== undefined) return c;
+                        }
+                        return undefined;
+                    };
 
                     let modelData = rawPredHistory.map(item => ({
                         time: Number(item.time),
-                        value: item[modelNameKey]
+                        value: item[modelName]
                     })).filter(item => item.value !== undefined && item.value !== null);
 
-                    if (modelData.length > 0) {
-                        // Resample based on resolution to prevent spacing gaps in Lightweight Charts
-                        if (activeResolution === '1h') {
-                            const grouped = {};
-                            modelData.forEach(item => {
-                                const roundedHour = Math.round(item.time / 3600) * 3600;
-                                grouped[roundedHour] = item.value;
-                            });
-                            modelData = Object.keys(grouped).map(t => ({
-                                time: parseInt(t),
-                                value: grouped[t]
-                            })).sort((a, b) => a.time - b.time);
-                        } else if (activeResolution === '1d') {
-                            const grouped = {};
-                            modelData.forEach(item => {
-                                const dateStr = new Date(item.time * 1000).toISOString().split('T')[0];
-                                grouped[dateStr] = item.value;
-                            });
-                            modelData = Object.keys(grouped).map(t => ({
-                                time: t,
-                                value: grouped[t]
-                            })).sort((a, b) => a.time.localeCompare(b.time));
-                        } else {
-                            // 5m
-                            modelData = modelData.sort((a, b) => a.time - b.time);
-                        }
+                    // 1. Keep only history points inside the visible candle window and
+                    //    strictly before the last candle (the live prediction is drawn separately)
+                    const firstCandleMs = toMs(formattedHistory[0].time);
+                    const lastCandleMs = toMs(lastTime);
+                    modelData = modelData.filter(item =>
+                        item.time * 1000 >= firstCandleMs && item.time * 1000 < lastCandleMs);
 
-                        // Append the final live prediction point at futureTime
-                        const lastPoint = modelData[modelData.length - 1];
-                        if (lastPoint.time !== futureTime) {
-                            modelData.push({ time: futureTime, value: predPrice });
-                        } else {
-                            lastPoint.value = predPrice;
-                        }
-
-                        lineSeries.setData(modelData);
-
-                        const finalPoint = modelData[modelData.length - 1];
-
-                        // Add Y-Axis Price Badge
-                        lineSeries.createPriceLine({
-                            price: finalPoint.value,
-                            color: color,
-                            lineWidth: 2,
-                            lineStyle: LightweightCharts.LineStyle.Dotted,
-                            axisLabelVisible: true,
-                            title: modelName
+                    // 2. Resample to the active resolution grid
+                    if (activeResolution === '1h') {
+                        const grouped = {};
+                        modelData.forEach(item => {
+                            grouped[Math.round(item.time / 3600) * 3600] = item.value;
                         });
-
-                        // Add circular target marker ONLY at the final future coordinate
-                        LightweightCharts.createSeriesMarkers(lineSeries, [
-                            {
-                                time: finalPoint.time,
-                                position: 'inBar',
-                                color: changePct > 0 ? '#00e676' : '#ff3d71',
-                                shape: 'circle',
-                                text: `${modelName === 'Transformer' ? 'TFT' : modelName}`
-                            }
-                        ]);
+                        modelData = Object.keys(grouped).map(t => ({
+                            time: parseInt(t),
+                            value: grouped[t]
+                        })).sort((a, b) => a.time - b.time);
+                    } else if (activeResolution === '1d') {
+                        const grouped = {};
+                        modelData.forEach(item => {
+                            grouped[new Date(item.time * 1000).toISOString().split('T')[0]] = item.value;
+                        });
+                        modelData = Object.keys(grouped).map(t => ({
+                            time: t,
+                            value: grouped[t]
+                        })).sort((a, b) => a.time.localeCompare(b.time));
                     } else {
-                        // Fallback: Point A: Last actual close. Point B: Future predicted price
-                        const lineData = [
-                            { time: lastTime, value: lastClose },
-                            { time: futureTime, value: predPrice }
-                        ];
-                        lineSeries.setData(lineData);
-
-                        // Add Y-Axis Price Badge
-                        lineSeries.createPriceLine({
-                            price: predPrice,
-                            color: color,
-                            lineWidth: 2,
-                            lineStyle: LightweightCharts.LineStyle.Dotted,
-                            axisLabelVisible: true,
-                            title: modelName
-                        });
-
-                        // Add circular target marker at the future coordinate
-                        LightweightCharts.createSeriesMarkers(lineSeries, [
-                            {
-                                time: futureTime,
-                                position: 'inBar',
-                                color: changePct > 0 ? '#00e676' : '#ff3d71',
-                                shape: 'circle',
-                                text: `${modelName === 'Transformer' ? 'TFT' : modelName}`
-                            }
-                        ]);
+                        modelData = modelData.sort((a, b) => a.time - b.time);
                     }
+
+                    // 3. Sanity filter: drop points more than 5% away from the candle close
+                    //    at that time (a 15-minute-ahead prediction is never that far off)
+                    modelData = modelData.filter(item => {
+                        const ref = nearestClose(item.time);
+                        const base = ref !== undefined ? ref : lastPrice;
+                        return Math.abs(item.value - base) / base <= 0.05;
+                    });
+
+                    // 4. Break the line where the engine wasn't running, instead of drawing
+                    //    long diagonals between distant points (whitespace item = gap)
+                    const withGaps = [];
+                    modelData.forEach((item, i) => {
+                        if (i > 0 && toMs(item.time) - toMs(modelData[i - 1].time) > maxGapMs) {
+                            const prev = modelData[i - 1].time;
+                            withGaps.push(activeResolution === '1d'
+                                ? { time: new Date(toMs(prev) + 86400000).toISOString().split('T')[0] }
+                                : { time: prev + 1 });
+                        }
+                        withGaps.push(item);
+                    });
+                    modelData = withGaps;
+
+                    // 5. Live prediction: always a fresh segment anchored at the current
+                    //    market close so it points from the real price to the target
+                    if (modelData.length > 0) {
+                        const lastPt = modelData[modelData.length - 1];
+                        if (lastPt.value !== undefined && lastCandleMs - toMs(lastPt.time) > maxGapMs) {
+                            modelData.push(activeResolution === '1d'
+                                ? { time: new Date(toMs(lastPt.time) + 86400000).toISOString().split('T')[0] }
+                                : { time: lastPt.time + 1 });
+                        }
+                    }
+                    modelData.push({ time: lastTime, value: lastClose });
+                    modelData.push({ time: futureTime, value: predPrice });
+
+                    lineSeries.setData(modelData);
+
+                    // Y-Axis price badge at the predicted target
+                    lineSeries.createPriceLine({
+                        price: predPrice,
+                        color: color,
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dotted,
+                        axisLabelVisible: true,
+                        title: modelName
+                    });
+
+                    // Circular target marker only at the future coordinate
+                    LightweightCharts.createSeriesMarkers(lineSeries, [
+                        {
+                            time: futureTime,
+                            position: 'inBar',
+                            color: changePct > 0 ? '#00e676' : '#ff3d71',
+                            shape: 'circle',
+                            text: `${modelName === 'Transformer' ? 'TFT' : modelName}`
+                        }
+                    ]);
                 });
 
                 // Auto-fit content and scroll to the end ONLY on first load

@@ -820,6 +820,9 @@ def run_inference(symbol, db_id):
             history_df = pd.DataFrame([new_entry])
 
         history_df = history_df.drop_duplicates(subset=['time'], keep='last').sort_values('time')
+        # Prune entries older than 7 days - they fall off the chart and bloat the payload
+        cutoff = int(datetime.now().timestamp()) - 7 * 24 * 3600
+        history_df = history_df[history_df['time'] >= cutoff]
         raw_history = history_df.tail(500).to_dict('records')
         cleaned_history = []
         for entry in raw_history:
