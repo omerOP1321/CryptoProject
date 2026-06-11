@@ -109,7 +109,7 @@ COINS = [
     ('XRPUSDT', 3)
 ]
 INTERVAL = '5m'
-SEQ_LENGTH = 120
+SEQ_LENGTH = 60  # must match training (preprocessing notebooks use SEQ_LENGTH = 60)
 BASE_URL = "https://api.binance.com/api/v3/klines"
 
 # --- 2. Model Architectures ---
@@ -160,7 +160,8 @@ class LSTMModel_ETH(nn.Module):
         out = F.relu(self.fc1(context))
         out = self.dropout(out)
         out = self.fc2(out)
-        return torch.sigmoid(out)
+        # No sigmoid: trainers predict Bollinger %B unbounded (matches current checkpoints)
+        return out
 
 class LSTMModel_XRP(nn.Module):
     def __init__(self, input_size, hidden_size=128, num_layers=2, dropout=0.1):
@@ -382,7 +383,7 @@ def fetch_missing_history(symbol, start_time_dt):
             'startTime': current_start
         }
         try:
-            response = requests.get(BASE_URL, params=params)
+            response = requests.get(BASE_URL, params=params, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if not data:
@@ -412,7 +413,7 @@ def fetch_missing_history(symbol, start_time_dt):
 
 def fetch_latest_data(symbol, interval=INTERVAL, limit=1000):
     params = {'symbol': symbol, 'interval': interval, 'limit': limit}
-    response = requests.get(BASE_URL, params=params)
+    response = requests.get(BASE_URL, params=params, timeout=10)
     if response.status_code == 200:
         data = response.json()
         cols = ['open_time', 'open', 'high', 'low', 'close', 'volume',
@@ -482,7 +483,7 @@ def infer_arima(close_series):
             return float(forecast.iloc[-1])
         except Exception as e:
             print(f"   -> ARIMA fitting failed: {e}")
-            return float(close_series.iloc[-1])
+            return None
 
 def initialize():
     global df_hist_dict, scalers_dict, models_lstm, models_tft
@@ -749,11 +750,9 @@ def run_inference(symbol, db_id):
         with torch.no_grad():
             pred_val = lstm_model_obj(input_lstm).item()
 
-        # Reconstruct LSTM price: %B target for ETHUSDT, log returns for others
-        if symbol == 'ETHUSDT':
-            pred_price_lstm = l_band + (pred_val * (h_band - l_band))
-        else:
-            pred_price_lstm = last_price * math.exp(pred_val)
+        # All LSTM trainers use TARGET_COL = 'target_pctb' (Bollinger %B), so the
+        # band reconstruction applies to every coin.
+        pred_price_lstm = l_band + (pred_val * (h_band - l_band))
 
         results["predictions"]["LSTM"] = {
             "val": pred_val,
@@ -779,22 +778,26 @@ def run_inference(symbol, db_id):
 
     # 6. Infer ARIMA (Runs on Close series directly)
     pred_price_arima = infer_arima(df_features['close'].tail(SEQ_LENGTH))
-    change_pct_arima = (pred_price_arima - last_price) / last_price * 100
-    results["predictions"]["ARIMA"] = {
-        "val": pred_price_arima,
-        "price": pred_price_arima,
-        "change_pct": change_pct_arima
-    }
+    if pred_price_arima is not None:
+        results["predictions"]["ARIMA"] = {
+            "val": pred_price_arima,
+            "price": pred_price_arima,
+            "change_pct": (pred_price_arima - last_price) / last_price * 100
+        }
 
-    # 7. Decide Consensus (Select model with largest absolute change_pct)
-    max_pct = -1.0
-    chosen = "None"
-    for name, p_data in results["predictions"].items():
-        abs_change = abs(p_data["change_pct"])
-        if abs_change > max_pct:
-            max_pct = abs_change
-            chosen = name
-    results["chosen_model"] = chosen
+    # 7. Decide Consensus: average the model prices into an Ensemble entry.
+    # (Picking the largest |change| just rewards the most extreme model.)
+    if results["predictions"]:
+        prices = [p["price"] for p in results["predictions"].values()]
+        ens_price = float(np.mean(prices))
+        results["predictions"]["Ensemble"] = {
+            "val": ens_price,
+            "price": ens_price,
+            "change_pct": (ens_price - last_price) / last_price * 100
+        }
+        results["chosen_model"] = "Ensemble"
+    else:
+        results["chosen_model"] = "None"
 
     # Update Prediction History
     try:

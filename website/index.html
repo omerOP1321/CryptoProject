@@ -289,7 +289,7 @@
             <div class="metrics">
                 <div class="metric"><small>Last Market Price</small><b id="last-price">$0.00</b></div>
                 <div class="metric"><small>Consensus Model</small><b id="chosen-model" style="color: var(--primary);">None</b></div>
-                <div class="metric"><small>Expected Change</small><b id="change-pct">+0.00%</b></div>
+                <div class="metric"><small>Expected Change (next 15 min)</small><b id="change-pct">+0.00%</b></div>
                 <div class="metric"><small>Signal Recommendation</small><b id="signal">NEUTRAL</b></div>
             </div>
 
@@ -328,7 +328,7 @@
         </div>
 
         <div class="footer">
-            <span>Updating automatically every 30 seconds. Hover on chart to see OHLC values.</span>
+            <span>Updating every 30 seconds. All model targets predict 15 minutes ahead (3 candles of 5m). Hover on chart for OHLC values.</span>
             <span>Powered by Supabase & TradingView</span>
         </div>
     </div>
@@ -379,7 +379,19 @@
 
                     if (data && data.payload) {
                         globalPayload = data.payload;
-                        document.getElementById('last-sync').innerText = `Last Sync: ${new Date().toLocaleTimeString()}`;
+
+                        // Staleness check: payload.timestamp is the last candle time (UTC).
+                        const syncElem = document.getElementById('last-sync');
+                        const payloadTime = new Date(data.payload.timestamp.replace(' ', 'T') + 'Z');
+                        const ageMin = (Date.now() - payloadTime.getTime()) / 60000;
+                        if (!isNaN(ageMin) && ageMin > 15) {
+                            syncElem.innerText = `⚠️ Predictions stale (${Math.round(ageMin)} min old) — engine may be offline`;
+                            syncElem.style.color = '#ffcc00';
+                        } else {
+                            syncElem.innerText = `Last Sync: ${new Date().toLocaleTimeString()}`;
+                            syncElem.style.color = '';
+                        }
+
                         renderDashboard();
                     }
                 } catch (error) {
@@ -672,13 +684,15 @@
                     chartInstance.timeScale().applyOptions({ rightOffset: 8 });
                 }
 
-                // Responsive resize
-                window.addEventListener('resize', () => {
-                    if (chartInstance) {
-                        chartInstance.resize(chartContainer.clientWidth, 520);
-                    }
-                });
             }
+
+            // Responsive resize — registered once (not per render) to avoid leaking listeners
+            window.addEventListener('resize', () => {
+                if (chartInstance) {
+                    const chartContainer = document.getElementById('chart-area-target');
+                    chartInstance.resize(chartContainer.clientWidth, 520);
+                }
+            });
 
             window.switchCoin = switchCoin;
             window.setResolution = setResolution;
