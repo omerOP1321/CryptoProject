@@ -7,6 +7,7 @@
     <!-- TradingView Lightweight Charts standalone production CDN -->
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="chart-utils.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
         
@@ -308,9 +309,16 @@
             <div class="controls-panel">
                 <div class="control-group">
                     <span class="control-label">Resolution:</span>
-                    <button class="btn active" onclick="setResolution('5m', this)">5m</button>
-                    <button class="btn" onclick="setResolution('1h', this)">1h</button>
-                    <button class="btn" onclick="setResolution('1d', this)">1d</button>
+                    <button class="btn active" data-res="5m" onclick="setResolution('5m', this)">5m</button>
+                    <button class="btn" data-res="1h" onclick="setResolution('1h', this)">1h</button>
+                    <button class="btn" data-res="1d" onclick="setResolution('1d', this)">1d</button>
+                </div>
+
+                <div class="control-group">
+                    <button class="btn" id="btn-autoscale" onclick="toggleAutoScale()"
+                            title="Automatically adjusts the graph scale to fit the currently visible data.">
+                        Auto Scale: ON
+                    </button>
                 </div>
                 
                 <div class="control-group">
@@ -359,6 +367,10 @@
         let chartInstance = null;
         let candlestickSeries = null;
         let activeModelSeries = [];
+        let lastRenderKey = '';
+
+        // Auto Scale: persisted across page loads, default ON
+        let autoScaleEnabled = localStorage.getItem('autoScaleEnabled') !== 'false';
 
         // Colors configurations for overlay models
         const MODEL_COLORS = {
@@ -431,7 +443,9 @@
 
             function setResolution(res, btn) {
                 activeResolution = res;
-                document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+                // Scope to resolution buttons only - other .btn controls (Auto Scale)
+                // manage their own active state
+                document.querySelectorAll('.btn[data-res]').forEach(b => b.classList.remove('active'));
                 if (btn) btn.classList.add('active');
 
                 // Reset chart instance to force recreation and fitting when switching resolutions
@@ -440,6 +454,24 @@
                 }
 
                 renderDashboard();
+            }
+
+            function updateAutoScaleButton() {
+                const btn = document.getElementById('btn-autoscale');
+                btn.innerText = `Auto Scale: ${autoScaleEnabled ? 'ON' : 'OFF'}`;
+                btn.classList.toggle('active', autoScaleEnabled);
+            }
+
+            function toggleAutoScale() {
+                autoScaleEnabled = !autoScaleEnabled;
+                localStorage.setItem('autoScaleEnabled', String(autoScaleEnabled));
+                updateAutoScaleButton();
+                if (chartInstance) {
+                    // ON: the price scale follows the visible data range (all series
+                    // combined) with margins. OFF: the current range is preserved and
+                    // manual axis dragging / zoom / pan stay untouched.
+                    chartInstance.priceScale('right').applyOptions({ autoScale: autoScaleEnabled });
+                }
             }
 
             function toggleModel(modelName) {
@@ -474,33 +506,16 @@
                     return;
                 }
 
-                // Candle opening at t covers t..t+300, so its close is the price at t+300
-                const closeAt = new Map(hist5m.map(c => [c.time + 300, c.c]));
-                const lastCandleTime = hist5m[hist5m.length - 1].time;
-
                 const cards = [];
                 Object.keys(MODEL_COLORS).forEach(modelName => {
                     if (!globalPayload.predictions || !globalPayload.predictions[modelName]) return;
 
-                    const errors = [];
-                    predHist.forEach(entry => {
-                        const pred = entry[modelName];
-                        if (pred === null || pred === undefined) return;
-                        const t = Number(entry.time);
-                        if (t > lastCandleTime) return; // prediction not matured yet
-                        const actual = closeAt.get(t) ?? closeAt.get(t - 300) ?? closeAt.get(t + 300);
-                        if (actual === undefined) return;
-                        errors.push(Math.abs(pred - actual) / actual * 100);
-                    });
-
-                    const recent = errors.slice(-20);
+                    const { avg, count } = ChartUtils.computeModelErrors(predHist, hist5m, modelName, 20);
                     const label = modelName === 'Transformer' ? 'TFT' : modelName;
                     const color = MODEL_COLORS[modelName];
-                    const value = recent.length
-                        ? (recent.reduce((a, b) => a + b, 0) / recent.length).toFixed(2) + '%'
-                        : '—';
-                    const note = recent.length
-                        ? `avg of last ${recent.length} prediction${recent.length > 1 ? 's' : ''}`
+                    const value = avg !== null ? avg.toFixed(2) + '%' : '—';
+                    const note = count
+                        ? `avg of last ${count} prediction${count > 1 ? 's' : ''}`
                         : 'no matured predictions yet';
 
                     cards.push(
@@ -515,6 +530,14 @@
 
             function renderDashboard() {
                 if (!globalPayload) return;
+
+                // Skip identical re-renders (the 30s poll usually returns unchanged
+                // data) - prevents series churn and scale jitter on live updates
+                const renderKey = [activeCoin, activeResolution, visibleModels.join(','),
+                                   globalPayload.timestamp].join('|');
+                if (chartInstance && renderKey === lastRenderKey) return;
+                lastRenderKey = renderKey;
+
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('content').style.display = 'block';
 
@@ -568,7 +591,9 @@
                         },
                         rightPriceScale: {
                             borderColor: 'rgba(43, 49, 67, 0.5)',
-                            autoScale: true
+                            autoScale: autoScaleEnabled,
+                            // ~8% breathing room above and below the visible data
+                            scaleMargins: { top: 0.08, bottom: 0.08 }
                         },
                         timeScale: {
                             borderColor: 'rgba(43, 49, 67, 0.5)',
@@ -651,7 +676,7 @@
 
                     const intervalSec = activeResolution === '5m' ? 300 : (activeResolution === '1h' ? 3600 : 86400);
                     const maxGapMs = 3 * intervalSec * 1000;
-                    const toMs = t => (typeof t === 'string' ? Date.parse(t) : t * 1000);
+                    const toMs = ChartUtils.toMs;
 
                     // Candle close lookup, used to discard history points that are far
                     // from the market (garbage left over from old engine versions)
@@ -702,25 +727,11 @@
 
                     // 3. Sanity filter: drop points more than 5% away from the candle close
                     //    at that time (a 15-minute-ahead prediction is never that far off)
-                    modelData = modelData.filter(item => {
-                        const ref = nearestClose(item.time);
-                        const base = ref !== undefined ? ref : lastPrice;
-                        return Math.abs(item.value - base) / base <= 0.05;
-                    });
+                    modelData = ChartUtils.filterSanePoints(modelData, nearestClose, lastPrice);
 
                     // 4. Break the line where the engine wasn't running, instead of drawing
                     //    long diagonals between distant points (whitespace item = gap)
-                    const withGaps = [];
-                    modelData.forEach((item, i) => {
-                        if (i > 0 && toMs(item.time) - toMs(modelData[i - 1].time) > maxGapMs) {
-                            const prev = modelData[i - 1].time;
-                            withGaps.push(activeResolution === '1d'
-                                ? { time: new Date(toMs(prev) + 86400000).toISOString().split('T')[0] }
-                                : { time: prev + 1 });
-                        }
-                        withGaps.push(item);
-                    });
-                    modelData = withGaps;
+                    modelData = ChartUtils.insertGapBreaks(modelData, maxGapMs, activeResolution === '1d');
 
                     // 5. Live prediction: always a fresh segment anchored at the current
                     //    market close so it points from the real price to the target
@@ -778,7 +789,9 @@
             window.switchCoin = switchCoin;
             window.setResolution = setResolution;
             window.toggleModel = toggleModel;
-            
+            window.toggleAutoScale = toggleAutoScale;
+
+            updateAutoScaleButton();
             fetchPredictions();
             setInterval(fetchPredictions, 30000);
         } else {

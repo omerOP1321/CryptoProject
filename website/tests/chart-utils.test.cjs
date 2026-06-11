@@ -1,0 +1,161 @@
+/*
+ * Unit tests for website/chart-utils.js
+ * Run with:  node --test website/tests/
+ */
+const { test } = require('node:test');
+const assert = require('node:assert');
+const ChartUtils = require('../chart-utils.js');
+
+const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors } = ChartUtils;
+
+// ---------------------------------------------------------------- toMs
+
+test('toMs converts unix seconds to ms', () => {
+    assert.strictEqual(toMs(1000), 1000000);
+});
+
+test('toMs parses YYYY-MM-DD date strings', () => {
+    assert.strictEqual(toMs('2026-06-11'), Date.parse('2026-06-11'));
+});
+
+// ---------------------------------------------------- filterSanePoints
+
+test('filterSanePoints keeps points near the market price', () => {
+    const nearestClose = () => 100;
+    const pts = [{ time: 1, value: 101 }, { time: 2, value: 99 }];
+    assert.deepStrictEqual(filterSanePoints(pts, nearestClose, 100), pts);
+});
+
+test('filterSanePoints drops outliers beyond tolerance', () => {
+    const nearestClose = () => 100;
+    const pts = [
+        { time: 1, value: 100.5 },  // 0.5% off - keep
+        { time: 2, value: 120 },    // 20% off - drop (legacy garbage)
+        { time: 3, value: 200 },    // 100% off - drop
+    ];
+    const out = filterSanePoints(pts, nearestClose, 100);
+    assert.deepStrictEqual(out.map(p => p.time), [1]);
+});
+
+test('filterSanePoints falls back to fallbackPrice when no candle matches', () => {
+    const nearestClose = () => undefined;
+    const pts = [{ time: 1, value: 102 }, { time: 2, value: 150 }];
+    const out = filterSanePoints(pts, nearestClose, 100);
+    assert.deepStrictEqual(out.map(p => p.time), [1]);
+});
+
+test('filterSanePoints drops NaN/invalid values and handles empty input', () => {
+    const nearestClose = () => 100;
+    assert.deepStrictEqual(filterSanePoints([], nearestClose, 100), []);
+    const pts = [{ time: 1, value: NaN }, { time: 2, value: null }, { time: 3, value: 100 }];
+    assert.deepStrictEqual(filterSanePoints(pts, nearestClose, 100).map(p => p.time), [3]);
+});
+
+test('filterSanePoints rejects everything when reference price is invalid', () => {
+    const nearestClose = () => undefined;
+    const pts = [{ time: 1, value: 100 }];
+    assert.deepStrictEqual(filterSanePoints(pts, nearestClose, 0), []);
+    assert.deepStrictEqual(filterSanePoints(pts, nearestClose, NaN), []);
+});
+
+test('filterSanePoints honors a custom tolerance', () => {
+    const nearestClose = () => 100;
+    const pts = [{ time: 1, value: 108 }];
+    assert.strictEqual(filterSanePoints(pts, nearestClose, 100, 0.05).length, 0);
+    assert.strictEqual(filterSanePoints(pts, nearestClose, 100, 0.10).length, 1);
+});
+
+// ----------------------------------------------------- insertGapBreaks
+
+test('insertGapBreaks leaves contiguous data untouched', () => {
+    const pts = [{ time: 0, value: 1 }, { time: 300, value: 2 }, { time: 600, value: 3 }];
+    assert.deepStrictEqual(insertGapBreaks(pts, 900 * 1000, false), pts);
+});
+
+test('insertGapBreaks inserts a whitespace item across a gap', () => {
+    const pts = [{ time: 0, value: 1 }, { time: 5000, value: 2 }];
+    const out = insertGapBreaks(pts, 900 * 1000, false);
+    assert.strictEqual(out.length, 3);
+    // whitespace item: has a time, no value -> chart renders a break
+    assert.strictEqual(out[1].time, 1);
+    assert.strictEqual('value' in out[1], false);
+    assert.deepStrictEqual(out[2], pts[1]);
+});
+
+test('insertGapBreaks handles multiple gaps', () => {
+    const pts = [
+        { time: 0, value: 1 }, { time: 300, value: 2 },     // contiguous
+        { time: 50000, value: 3 },                           // gap 1
+        { time: 100000, value: 4 },                          // gap 2
+    ];
+    const out = insertGapBreaks(pts, 900 * 1000, false);
+    assert.strictEqual(out.length, 6);
+    assert.strictEqual(out.filter(p => !('value' in p)).length, 2);
+});
+
+test('insertGapBreaks handles empty and single-point datasets', () => {
+    assert.deepStrictEqual(insertGapBreaks([], 1000, false), []);
+    const single = [{ time: 5, value: 1 }];
+    assert.deepStrictEqual(insertGapBreaks(single, 1000, false), single);
+});
+
+test('insertGapBreaks uses date-string whitespace for daily resolution', () => {
+    const pts = [{ time: '2026-06-01', value: 1 }, { time: '2026-06-20', value: 2 }];
+    const out = insertGapBreaks(pts, 3 * 86400 * 1000, true);
+    assert.strictEqual(out.length, 3);
+    assert.strictEqual(out[1].time, '2026-06-02'); // day after previous point
+    assert.strictEqual('value' in out[1], false);
+});
+
+// -------------------------------------------------- computeModelErrors
+
+// Candles opening at t close at t+300 with close = c
+const candles = [
+    { time: 0,    c: 100 },
+    { time: 300,  c: 102 },
+    { time: 600,  c: 104 },
+    { time: 900,  c: 106 },
+];
+
+test('computeModelErrors averages relative error of matured predictions', () => {
+    const predHist = [
+        { time: 300, LSTM: 101 },   // actual 100 -> 1% error
+        { time: 600, LSTM: 104.04 }, // actual 102 -> 2% error
+    ];
+    const { avg, count } = computeModelErrors(predHist, candles, 'LSTM');
+    assert.strictEqual(count, 2);
+    assert.ok(Math.abs(avg - 1.5) < 1e-9);
+});
+
+test('computeModelErrors skips unmatured and null predictions', () => {
+    const predHist = [
+        { time: 300, LSTM: 101 },        // matured
+        { time: 99999, LSTM: 500 },      // target in the future -> skip
+        { time: 600, LSTM: null },       // null -> skip
+    ];
+    const { avg, count } = computeModelErrors(predHist, candles, 'LSTM');
+    assert.strictEqual(count, 1);
+    assert.ok(Math.abs(avg - 1.0) < 1e-9);
+});
+
+test('computeModelErrors returns null avg for empty/missing data', () => {
+    assert.deepStrictEqual(computeModelErrors([], candles, 'LSTM'), { avg: null, count: 0 });
+    assert.deepStrictEqual(computeModelErrors([{ time: 300, LSTM: 101 }], [], 'LSTM'), { avg: null, count: 0 });
+    assert.deepStrictEqual(computeModelErrors([{ time: 300, TFT: 101 }], candles, 'LSTM'), { avg: null, count: 0 });
+});
+
+test('computeModelErrors keeps only the last N matured predictions', () => {
+    // 30 candles, 30 matured predictions each with 1% error
+    const manyCandles = Array.from({ length: 31 }, (_, i) => ({ time: i * 300, c: 100 }));
+    const manyPreds = Array.from({ length: 30 }, (_, i) => ({ time: (i + 1) * 300, LSTM: 101 }));
+    const { count } = computeModelErrors(manyPreds, manyCandles, 'LSTM', 20);
+    assert.strictEqual(count, 20);
+});
+
+test('computeModelErrors tolerates +/- one candle offset in timestamps', () => {
+    const predHist = [{ time: 450, LSTM: 101 }]; // no exact close at 450
+    const offsetCandles = [{ time: 150, c: 100 }, { time: 450, c: 100 }];
+    // closeAt has keys 450 and 750; t=450 matches exactly via key 450
+    const { count } = computeModelErrors(predHist, offsetCandles, 'LSTM');
+    assert.strictEqual(count, 1);
+});
