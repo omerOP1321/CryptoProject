@@ -370,7 +370,7 @@
         </div>
 
         <div class="footer">
-            <span>Updating every 30 seconds. All model targets predict 15 minutes ahead (3 candles of 5m). Hover on chart for OHLC values.</span>
+            <span>Updating every 30 seconds. All model targets predict 5 minutes ahead (3 candles of 5m). Hover on chart for OHLC values.</span>
             <span>Powered by Supabase & TradingView</span>
         </div>
     </div>
@@ -475,15 +475,18 @@
                 fetchPredictions();
             }
 
-            // [fromSec, toSec] of the selected window. Predefined ranges end "now";
-            // a custom range uses the user-entered bounds.
-            function rangeWindow() {
-                const nowSec = Math.floor(Date.now() / 1000);
+            // [fromSec, toSec] of the selected window. Predefined ranges are
+            // anchored at the newest available candle, NOT the wall clock - when
+            // the engine has been offline for a while, a clock-anchored short
+            // window would be empty (or force a coarser resolution) even though
+            // data exists. Custom ranges use the user-entered absolute bounds.
+            function rangeWindow(dataEndSec) {
                 if (activeRange === 'custom' && customFromSec && customToSec) {
                     return [customFromSec, customToSec];
                 }
+                const endSec = dataEndSec || Math.floor(Date.now() / 1000);
                 const span = RANGES[activeRange] || RANGES['24H'];
-                return [nowSec - span, nowSec];
+                return [endSec - span, endSec];
             }
 
             // Finest candle set that covers the span: 5m history holds ~41h,
@@ -607,7 +610,15 @@
             function renderDashboard() {
                 if (!globalPayload) return;
 
-                const [rangeFromSec, rangeToSec] = rangeWindow();
+                // Newest candle across the finest available series anchors preset ranges
+                const hists = globalPayload.history || {};
+                const last5m = (hists['5m'] && hists['5m'].length)
+                    ? hists['5m'][hists['5m'].length - 1].time + 300 : null;
+                const last1h = (hists['1h'] && hists['1h'].length)
+                    ? hists['1h'][hists['1h'].length - 1].time + 3600 : null;
+                const dataEndSec = last5m || last1h || Math.floor(Date.now() / 1000);
+
+                const [rangeFromSec, rangeToSec] = rangeWindow(dataEndSec);
                 activeResolution = resolutionForRange(rangeFromSec, rangeToSec);
 
                 // Build the candle set for the window. If the preferred resolution's
@@ -836,7 +847,7 @@
                     //    close, pointing to the target. Only drawn when the selected
                     //    range includes the present - a past custom window has no live
                     //    forecast, showing one would mismatch old candles with new data.
-                    const showLive = rangeToSec * 1000 >= Date.now() - 30 * 60000;
+                    const showLive = rangeToSec >= dataEndSec - 1800;
                     if (showLive) {
                         const lastSeg = segments[segments.length - 1];
                         const continuesLastSeg = lastSeg &&
@@ -885,6 +896,22 @@
                         ]);
                     }
                 });
+
+                // Re-assert auto scale after the dataset changes - manual axis
+                // dragging silently disables it inside the library, which would
+                // otherwise leave the Y-axis frozen on an old range forever
+                if (autoScaleEnabled) {
+                    chartInstance.priceScale('right').applyOptions({ autoScale: true });
+                }
+
+                // Expose render state for validation/debugging
+                window.__chartDebug = {
+                    range: activeRange,
+                    resolution: activeResolution,
+                    candles: formattedHistory.length,
+                    from: rangeFromSec,
+                    to: rangeToSec
+                };
 
                 // Auto-fit content and scroll to the end ONLY on first load
                 if (isFirstRender) {
