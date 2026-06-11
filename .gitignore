@@ -21,3 +21,5 @@ venv/
 supabase_creds.json
 credentials.json
 token.json
+# Ignore vscode settings
+.vscode/
