@@ -6,7 +6,38 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const ChartUtils = require('../chart-utils.js');
 
-const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors, computeModelStats } = ChartUtils;
+const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors, computeModelStats, splitAtGaps } = ChartUtils;
+
+// -------------------------------------------------------- splitAtGaps
+
+test('splitAtGaps keeps contiguous data as one segment', () => {
+    const pts = [{ time: 0, value: 1 }, { time: 300, value: 2 }, { time: 600, value: 3 }];
+    assert.deepStrictEqual(splitAtGaps(pts, 900 * 1000), [pts]);
+});
+
+test('splitAtGaps splits at every gap', () => {
+    const pts = [
+        { time: 0, value: 1 }, { time: 300, value: 2 },
+        { time: 50000, value: 3 },
+        { time: 100000, value: 4 }, { time: 100300, value: 5 },
+    ];
+    const segs = splitAtGaps(pts, 900 * 1000);
+    assert.strictEqual(segs.length, 3);
+    assert.deepStrictEqual(segs[0].map(p => p.time), [0, 300]);
+    assert.deepStrictEqual(segs[1].map(p => p.time), [50000]);
+    assert.deepStrictEqual(segs[2].map(p => p.time), [100000, 100300]);
+});
+
+test('splitAtGaps handles empty and single-point inputs', () => {
+    assert.deepStrictEqual(splitAtGaps([], 1000), []);
+    assert.deepStrictEqual(splitAtGaps([{ time: 5, value: 1 }], 1000), [[{ time: 5, value: 1 }]]);
+});
+
+test('splitAtGaps works with daily date-string times', () => {
+    const pts = [{ time: '2026-06-01', value: 1 }, { time: '2026-06-20', value: 2 }];
+    const segs = splitAtGaps(pts, 3 * 86400 * 1000);
+    assert.strictEqual(segs.length, 2);
+});
 
 // ---------------------------------------------------------------- toMs
 

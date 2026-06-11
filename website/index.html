@@ -755,16 +755,21 @@
                     const changePct = predData.change_pct;
                     const color = MODEL_COLORS[modelName];
 
-                    // Create line series for the prediction path
-                    const lineSeries = chartInstance.addSeries(LightweightCharts.LineSeries, {
-                        color: color,
-                        lineWidth: 2,
-                        lineStyle: LightweightCharts.LineStyle.Dashed,
-                        pointRadius: 4,
-                        priceLineVisible: false, // disable default price line
-                        lastValueVisible: false  // disable default Y-axis label to prevent duplicates
-                    });
-                    activeModelSeries.push(lineSeries);
+                    // One line series per contiguous run of points - Lightweight Charts
+                    // connects straight across whitespace, so separate series are the
+                    // only way to render true gaps
+                    const makeLineSeries = () => {
+                        const s = chartInstance.addSeries(LightweightCharts.LineSeries, {
+                            color: color,
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Dashed,
+                            pointMarkersVisible: true, // lone points stay visible as dots
+                            priceLineVisible: false,
+                            lastValueVisible: false
+                        });
+                        activeModelSeries.push(s);
+                        return s;
+                    };
 
                     const rawPredHistory = globalPayload.prediction_history || [];
 
@@ -823,33 +828,43 @@
                     //    at that time (a 15-minute-ahead prediction is never that far off)
                     modelData = ChartUtils.filterSanePoints(modelData, nearestClose, lastPrice);
 
-                    // 4. Break the line where the engine wasn't running, instead of drawing
-                    //    long diagonals between distant points (whitespace item = gap)
-                    modelData = ChartUtils.insertGapBreaks(modelData, maxGapMs, activeResolution === '1d');
+                    // 4. Split into contiguous segments at the gaps - missing periods
+                    //    (engine offline) render as real breaks, never diagonals
+                    const segments = ChartUtils.splitAtGaps(modelData, maxGapMs);
 
-                    // 5. Live prediction: a fresh segment anchored at the current market
+                    // 5. Live prediction: a segment anchored at the current market
                     //    close, pointing to the target. Only drawn when the selected
                     //    range includes the present - a past custom window has no live
                     //    forecast, showing one would mismatch old candles with new data.
                     const showLive = rangeToSec * 1000 >= Date.now() - 30 * 60000;
                     if (showLive) {
-                        if (modelData.length > 0) {
-                            const lastPt = modelData[modelData.length - 1];
-                            if (lastPt.value !== undefined && lastCandleMs - toMs(lastPt.time) > maxGapMs) {
-                                modelData.push(activeResolution === '1d'
-                                    ? { time: new Date(toMs(lastPt.time) + 86400000).toISOString().split('T')[0] }
-                                    : { time: lastPt.time + 1 });
+                        const lastSeg = segments[segments.length - 1];
+                        const continuesLastSeg = lastSeg &&
+                            lastCandleMs - toMs(lastSeg[lastSeg.length - 1].time) <= maxGapMs;
+                        if (continuesLastSeg) {
+                            if (toMs(lastSeg[lastSeg.length - 1].time) < lastCandleMs) {
+                                lastSeg.push({ time: lastTime, value: lastClose });
                             }
+                            lastSeg.push({ time: futureTime, value: predPrice });
+                        } else {
+                            segments.push([
+                                { time: lastTime, value: lastClose },
+                                { time: futureTime, value: predPrice }
+                            ]);
                         }
-                        modelData.push({ time: lastTime, value: lastClose });
-                        modelData.push({ time: futureTime, value: predPrice });
                     }
 
-                    lineSeries.setData(modelData);
+                    let liveSeries = null;
+                    segments.forEach(seg => {
+                        if (!seg.length) return;
+                        const s = makeLineSeries();
+                        s.setData(seg);
+                        liveSeries = s;
+                    });
 
-                    if (showLive) {
+                    if (showLive && liveSeries) {
                         // Y-Axis price badge at the predicted target
-                        lineSeries.createPriceLine({
+                        liveSeries.createPriceLine({
                             price: predPrice,
                             color: color,
                             lineWidth: 2,
@@ -859,7 +874,7 @@
                         });
 
                         // Circular target marker only at the future coordinate
-                        LightweightCharts.createSeriesMarkers(lineSeries, [
+                        LightweightCharts.createSeriesMarkers(liveSeries, [
                             {
                                 time: futureTime,
                                 position: 'inBar',

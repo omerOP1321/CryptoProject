@@ -40,6 +40,8 @@
      * points are further apart than maxGapMs, so the chart renders separate
      * segments instead of a straight line across the missing period.
      * Points must already be sorted by time.
+     * NOTE: Lightweight Charts line series connect straight across whitespace,
+     * so for that library use splitAtGaps() and draw one series per segment.
      */
     function insertGapBreaks(points, maxGapMs, isDaily) {
         var out = [];
@@ -53,6 +55,25 @@
             out.push(p);
         });
         return out;
+    }
+
+    /*
+     * Split sorted points into contiguous runs wherever two consecutive points
+     * are further apart than maxGapMs. Each run is rendered as a separate line
+     * series so missing periods show as real gaps.
+     */
+    function splitAtGaps(points, maxGapMs) {
+        var segments = [];
+        var current = [];
+        points.forEach(function (p, i) {
+            if (i > 0 && toMs(p.time) - toMs(points[i - 1].time) > maxGapMs) {
+                segments.push(current);
+                current = [];
+            }
+            current.push(p);
+        });
+        if (current.length) segments.push(current);
+        return segments;
     }
 
     /*
@@ -163,6 +184,7 @@
         filterSanePoints: filterSanePoints,
         insertGapBreaks: insertGapBreaks,
         computeModelErrors: computeModelErrors,
-        computeModelStats: computeModelStats
+        computeModelStats: computeModelStats,
+        splitAtGaps: splitAtGaps
     };
 }));
