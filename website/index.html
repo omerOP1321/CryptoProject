@@ -339,8 +339,12 @@
 
                 <div class="control-group">
                     <button class="btn" id="btn-autoscale" onclick="toggleAutoScale()"
-                            title="Automatically adjusts the graph scale to fit the currently visible data.">
+                            title="Automatically fits the view to show all candles and model predictions, and keeps following live updates.">
                         Auto Scale: ON
+                    </button>
+                    <button class="btn" id="btn-pricelines" onclick="togglePriceLines()"
+                            title="Show or hide the long horizontal price lines for each model.">
+                        Price Lines: ON
                     </button>
                 </div>
                 
@@ -405,6 +409,7 @@
 
         // Auto Scale: persisted across page loads, default ON
         let autoScaleEnabled = localStorage.getItem('autoScaleEnabled') !== 'false';
+        let priceLinesEnabled = localStorage.getItem('priceLinesEnabled') !== 'false';
 
         // Colors configurations for overlay models
         const MODEL_COLORS = {
@@ -542,11 +547,31 @@
                 localStorage.setItem('autoScaleEnabled', String(autoScaleEnabled));
                 updateAutoScaleButton();
                 if (chartInstance) {
-                    // ON: the price scale follows the visible data range (all series
-                    // combined) with margins. OFF: the current range is preserved and
-                    // manual axis dragging / zoom / pan stay untouched.
                     chartInstance.priceScale('right').applyOptions({ autoScale: autoScaleEnabled });
+                    if (autoScaleEnabled) {
+                        // ON: snap the whole view to all candles + model predictions
+                        // (incl. the future targets), then keep following on updates.
+                        chartInstance.timeScale().fitContent();
+                        chartInstance.timeScale().applyOptions({ rightOffset: 8 });
+                    }
+                    // OFF: leave the current zoom/pan and Y-range exactly as they are.
                 }
+            }
+
+            function updatePriceLinesButton() {
+                const btn = document.getElementById('btn-pricelines');
+                btn.innerText = `Price Lines: ${priceLinesEnabled ? 'ON' : 'OFF'}`;
+                btn.classList.toggle('active', priceLinesEnabled);
+            }
+
+            function togglePriceLines() {
+                priceLinesEnabled = !priceLinesEnabled;
+                localStorage.setItem('priceLinesEnabled', String(priceLinesEnabled));
+                updatePriceLinesButton();
+                // Price lines are attached to series, so rebuild the chart to add/remove them
+                chartInstance = null;
+                lastRenderKey = '';
+                renderDashboard();
             }
 
             function toggleModel(modelName) {
@@ -874,15 +899,18 @@
                     });
 
                     if (showLive && liveSeries) {
-                        // Y-Axis price badge at the predicted target
-                        liveSeries.createPriceLine({
-                            price: predPrice,
-                            color: color,
-                            lineWidth: 2,
-                            lineStyle: LightweightCharts.LineStyle.Dotted,
-                            axisLabelVisible: true,
-                            title: modelName
-                        });
+                        // Long horizontal price line + axis badge at the predicted
+                        // target (toggleable - users can hide the clutter)
+                        if (priceLinesEnabled) {
+                            liveSeries.createPriceLine({
+                                price: predPrice,
+                                color: color,
+                                lineWidth: 2,
+                                lineStyle: LightweightCharts.LineStyle.Dotted,
+                                axisLabelVisible: true,
+                                title: modelName
+                            });
+                        }
 
                         // Circular target marker only at the future coordinate
                         LightweightCharts.createSeriesMarkers(liveSeries, [
@@ -897,14 +925,7 @@
                     }
                 });
 
-                // Re-assert auto scale after the dataset changes - manual axis
-                // dragging silently disables it inside the library, which would
-                // otherwise leave the Y-axis frozen on an old range forever
-                if (autoScaleEnabled) {
-                    chartInstance.priceScale('right').applyOptions({ autoScale: true });
-                }
-
-                // Expose render state for validation/debugging
+                // Expose render state + chart instance for validation/debugging
                 window.__chartDebug = {
                     range: activeRange,
                     resolution: activeResolution,
@@ -912,9 +933,18 @@
                     from: rangeFromSec,
                     to: rangeToSec
                 };
+                window.__chart = chartInstance;
 
-                // Auto-fit content and scroll to the end ONLY on first load
-                if (isFirstRender) {
+                if (autoScaleEnabled) {
+                    // ON: re-fit the whole view on EVERY render so all candles, model
+                    // lines and future prediction targets stay visible and the view
+                    // follows live updates. (Manual axis dragging silently disables the
+                    // library's autoScale, so we also re-assert it here.)
+                    chartInstance.priceScale('right').applyOptions({ autoScale: true });
+                    chartInstance.timeScale().fitContent();
+                    chartInstance.timeScale().applyOptions({ rightOffset: 8 });
+                } else if (isFirstRender) {
+                    // OFF: frame the data once on first paint, then hand control to the user
                     chartInstance.timeScale().fitContent();
                     chartInstance.timeScale().applyOptions({ rightOffset: 8 });
                 }
@@ -934,8 +964,10 @@
             window.applyCustomRange = applyCustomRange;
             window.toggleModel = toggleModel;
             window.toggleAutoScale = toggleAutoScale;
+            window.togglePriceLines = togglePriceLines;
 
             updateAutoScaleButton();
+            updatePriceLinesButton();
             updateRangeButtons();
             fetchPredictions();
             setInterval(fetchPredictions, 30000);
