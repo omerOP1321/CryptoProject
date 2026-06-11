@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const ChartUtils = require('../chart-utils.js');
 
-const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors } = ChartUtils;
+const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors, computeModelStats } = ChartUtils;
 
 // ---------------------------------------------------------------- toMs
 
@@ -158,4 +158,85 @@ test('computeModelErrors tolerates +/- one candle offset in timestamps', () => {
     // closeAt has keys 450 and 750; t=450 matches exactly via key 450
     const { count } = computeModelErrors(predHist, offsetCandles, 'LSTM');
     assert.strictEqual(count, 1);
+});
+
+// --------------------------------------------------- computeModelStats
+
+// Candles: opens 0..900, each closes 300s later.
+// closeAt keys: 300->100, 600->102, 900->104, 1200->106
+const statCandles = [
+    { time: 0,   c: 100 },
+    { time: 300, c: 102 },
+    { time: 600, c: 104 },
+    { time: 900, c: 106 },
+];
+
+test('computeModelStats: directional accuracy counts correct calls', () => {
+    // Target t=900: actual = closeAt(900) = 104, baseline = closeAt(300) = 100
+    // -> actual move is UP. pred 105 says UP (hit), pred 99 says DOWN (miss).
+    const predHist = [
+        { time: 900, LSTM: 105 },
+        { time: 900, LSTM: 99 },
+    ];
+    const stats = computeModelStats(predHist, statCandles, 'LSTM');
+    assert.strictEqual(stats.dirCount, 2);
+    assert.ok(Math.abs(stats.dirAccuracy - 50) < 1e-9);
+    assert.strictEqual(stats.errorCount, 2);
+});
+
+test('computeModelStats: error average matches computeModelErrors logic', () => {
+    const predHist = [{ time: 900, LSTM: 105.04 }]; // actual 104 -> 1% error
+    const stats = computeModelStats(predHist, statCandles, 'LSTM');
+    assert.ok(Math.abs(stats.avgError - 1.0) < 1e-9);
+    assert.strictEqual(stats.errorCount, 1);
+});
+
+test('computeModelStats: window filtering excludes out-of-range predictions', () => {
+    const predHist = [
+        { time: 600, LSTM: 103 },  // inside window
+        { time: 900, LSTM: 105 },  // outside (after toSec)
+    ];
+    const stats = computeModelStats(predHist, statCandles, 'LSTM', { fromSec: 0, toSec: 700 });
+    assert.strictEqual(stats.errorCount, 1);
+});
+
+test('computeModelStats: zero actual move carries no direction', () => {
+    // Baseline closeAt(300)=100 and actual closeAt(900)=100 -> flat move
+    const flatCandles = [
+        { time: 0,   c: 100 },
+        { time: 300, c: 101 },
+        { time: 600, c: 100 },
+        { time: 900, c: 100 },
+    ];
+    const predHist = [{ time: 900, LSTM: 105 }];
+    const stats = computeModelStats(predHist, flatCandles, 'LSTM');
+    assert.strictEqual(stats.errorCount, 1);     // error still measured
+    assert.strictEqual(stats.dirCount, 0);       // direction not scored
+    assert.strictEqual(stats.dirAccuracy, null);
+});
+
+test('computeModelStats: missing baseline candle skips direction, keeps error', () => {
+    // Only the actual's candle exists; t-600/t-900 closes are absent
+    const sparse = [{ time: 600, c: 104 }];      // closeAt: 900 -> 104... but lastCandleTime=600 < t=900
+    const sparse2 = [{ time: 600, c: 104 }, { time: 900, c: 105 }];
+    const predHist = [{ time: 900, LSTM: 103 }];
+    const stats = computeModelStats(predHist, sparse2, 'LSTM');
+    assert.strictEqual(stats.errorCount, 1);
+    assert.strictEqual(stats.dirCount, 0);
+});
+
+test('computeModelStats: lastN caps the evaluated predictions', () => {
+    const manyCandles = Array.from({ length: 40 }, (_, i) => ({ time: i * 300, c: 100 }));
+    const manyPreds = Array.from({ length: 30 }, (_, i) => ({ time: (i + 3) * 300, LSTM: 101 }));
+    const stats = computeModelStats(manyPreds, manyCandles, 'LSTM', { lastN: 10 });
+    assert.strictEqual(stats.errorCount, 10);
+});
+
+test('computeModelStats: empty inputs return null metrics', () => {
+    assert.deepStrictEqual(
+        computeModelStats([], statCandles, 'LSTM'),
+        { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 });
+    assert.deepStrictEqual(
+        computeModelStats([{ time: 900, LSTM: 105 }], [], 'LSTM'),
+        { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 });
 });

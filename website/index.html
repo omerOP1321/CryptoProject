@@ -610,6 +610,27 @@
                 const [rangeFromSec, rangeToSec] = rangeWindow();
                 activeResolution = resolutionForRange(rangeFromSec, rangeToSec);
 
+                // Build the candle set for the window. If the preferred resolution's
+                // data doesn't reach back far enough (5m holds ~41h), fall back to
+                // a coarser series that covers the requested period.
+                const buildHistory = res => ((globalPayload.history && globalPayload.history[res]) || [])
+                    .map(item => ({ time: item.time, open: item.o, high: item.h, low: item.l, close: item.c }))
+                    .filter(item => {
+                        const ms = ChartUtils.toMs(item.time);
+                        return ms >= rangeFromSec * 1000 && ms <= rangeToSec * 1000;
+                    })
+                    .sort((a, b) => (typeof a.time === 'string' ? a.time.localeCompare(b.time) : a.time - b.time));
+
+                let formattedHistory = buildHistory(activeResolution);
+                if (formattedHistory.length === 0 && activeResolution === '5m') {
+                    activeResolution = '1h';
+                    formattedHistory = buildHistory('1h');
+                }
+                if (formattedHistory.length === 0 && activeResolution === '1h') {
+                    activeResolution = '1d';
+                    formattedHistory = buildHistory('1d');
+                }
+
                 // Skip identical re-renders (the 30s poll usually returns unchanged
                 // data) - prevents series churn and scale jitter on live updates
                 const renderKey = [activeCoin, activeRange, customFromSec, customToSec,
@@ -700,19 +721,7 @@
                     activeModelSeries = [];
                 }
 
-                // Format and load candlestick history, restricted to the selected window
-                const rawHistory = globalPayload.history ? globalPayload.history[activeResolution] : [];
-                const formattedHistory = rawHistory.map(item => ({
-                    time: item.time,
-                    open: item.o,
-                    high: item.h,
-                    low: item.l,
-                    close: item.c
-                })).filter(item => {
-                    const ms = ChartUtils.toMs(item.time);
-                    return ms >= rangeFromSec * 1000 && ms <= rangeToSec * 1000;
-                }).sort((a, b) => (typeof a.time === 'string' ? a.time.localeCompare(b.time) : a.time - b.time));
-
+                // Candle history was built (with resolution fallback) at the top
                 if (formattedHistory.length === 0) {
                     chartContainer.innerHTML =
                         '<div class="loading-spinner">No market data available for the selected time range.</div>';
@@ -879,11 +888,13 @@
             });
 
             window.switchCoin = switchCoin;
-            window.setResolution = setResolution;
+            window.setRange = setRange;
+            window.applyCustomRange = applyCustomRange;
             window.toggleModel = toggleModel;
             window.toggleAutoScale = toggleAutoScale;
 
             updateAutoScaleButton();
+            updateRangeButtons();
             fetchPredictions();
             setInterval(fetchPredictions, 30000);
         } else {
