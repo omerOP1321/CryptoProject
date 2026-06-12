@@ -215,17 +215,19 @@ test('computeModelErrors tolerates +/- one candle offset in timestamps', () => {
 
 // --------------------------------------------------- computeModelStats
 
-// Candles: opens 0..900, each closes 300s later.
-// closeAt keys: 300->100, 600->102, 900->104, 1200->106
+// Candles: opens 0..1200, each closes 300s later. The last (open 1200) is the
+// in-progress candle, so predictions at t=900 are matured (1200 exists after them).
+// closeAt keys: 300->100, 600->102, 900->104, 1200->106, 1500->108
 const statCandles = [
-    { time: 0,   c: 100 },
-    { time: 300, c: 102 },
-    { time: 600, c: 104 },
-    { time: 900, c: 106 },
+    { time: 0,    c: 100 },
+    { time: 300,  c: 102 },
+    { time: 600,  c: 104 },
+    { time: 900,  c: 106 },
+    { time: 1200, c: 108 },
 ];
 
 test('computeModelStats: directional accuracy counts correct calls', () => {
-    // Target t=900: actual = closeAt(900) = 104, baseline = closeAt(300) = 100
+    // Target t=900: actual = closeAt(1200) = 106, baseline = closeAt(900) = 104
     // -> actual move is UP. pred 105 says UP (hit), pred 99 says DOWN (miss).
     const predHist = [
         { time: 900, LSTM: 105 },
@@ -235,6 +237,12 @@ test('computeModelStats: directional accuracy counts correct calls', () => {
     assert.strictEqual(stats.dirCount, 2);
     assert.ok(Math.abs(stats.dirAccuracy - 50) < 1e-9);
     assert.strictEqual(stats.errorCount, 2);
+});
+
+test('computeModelStats: in-progress target candle is NOT matured', () => {
+    // t=1200 == last candle open (in-progress) -> excluded (close not final yet)
+    const stats = computeModelStats([{ time: 1200, LSTM: 109 }], statCandles, 'LSTM');
+    assert.deepStrictEqual(stats, { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 });
 });
 
 test('computeModelStats: error uses the next candle close (t+300) as actual', () => {
@@ -255,12 +263,14 @@ test('computeModelStats: window filtering excludes out-of-range predictions', ()
 });
 
 test('computeModelStats: zero actual move carries no direction', () => {
-    // Baseline closeAt(300)=100 and actual closeAt(900)=100 -> flat move
+    // For t=900: baseline closeAt(900)=100 and actual closeAt(1200)=100 -> flat move.
+    // (open 1200 is the in-progress candle, making t=900 matured.)
     const flatCandles = [
-        { time: 0,   c: 100 },
-        { time: 300, c: 101 },
-        { time: 600, c: 100 },
-        { time: 900, c: 100 },
+        { time: 0,    c: 100 },
+        { time: 300,  c: 101 },
+        { time: 600,  c: 100 },
+        { time: 900,  c: 100 },
+        { time: 1200, c: 100 },
     ];
     const predHist = [{ time: 900, LSTM: 105 }];
     const stats = computeModelStats(predHist, flatCandles, 'LSTM');

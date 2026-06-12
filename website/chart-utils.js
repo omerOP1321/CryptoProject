@@ -143,14 +143,18 @@
             var pred = Number(raw);
             if (raw === null || raw === undefined || !Number.isFinite(pred)) return;
             var t = Number(entry.time);
-            if (!Number.isFinite(t) || t > lastCandleTime || t < fromSec || t > toSec) return;
-            // Realized price = predicted candle's close = closeAt[t+300] (1 candle ahead)
+            // Matured only when the predicted candle (open t) has FULLY CLOSED, i.e. a
+            // later candle exists (t strictly before the last, in-progress candle).
+            // Using `t > lastCandleTime` would include the in-progress target candle
+            // and evaluate against its non-final running close.
+            if (!Number.isFinite(t) || t >= lastCandleTime || t < fromSec || t > toSec) return;
+            // Realized price = predicted candle's final close = closeAt[t+300]. Require it
+            // exactly (clean 300s grid); a gap here means we can't evaluate -> skip.
             var actual = closeAt.get(t + 300);
-            if (actual === undefined) actual = closeAt.get(t);
             if (actual === undefined || actual <= 0) return;
-            // Baseline = price when the prediction was made = previous close = closeAt[t]
+            // Baseline = price when the prediction was made = previous close = closeAt[t].
+            // If absent (data gap), direction is left unscored below.
             var base = closeAt.get(t);
-            if (base === undefined) base = closeAt.get(t - 300);
             matured.push({
                 err: Math.abs(pred - actual) / actual * 100,
                 pred: pred,
