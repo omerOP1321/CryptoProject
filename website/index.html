@@ -343,7 +343,7 @@
             <div class="metrics">
                 <div class="metric"><small>Last Market Price</small><b id="last-price">$0.00</b></div>
                 <div class="metric"><small>Consensus Model</small><b id="chosen-model" style="color: var(--primary);">None</b></div>
-                <div class="metric"><small>Expected Change (next 15 min)</small><b id="change-pct">+0.00%</b></div>
+                <div class="metric"><small>Expected Change (next 5 min)</small><b id="change-pct">+0.00%</b></div>
                 <div class="metric"><small>Signal Recommendation</small><b id="signal">NEUTRAL</b></div>
             </div>
 
@@ -406,7 +406,7 @@
         </div>
 
         <div class="footer">
-            <span>Updating every 30 seconds. All model targets predict 15 minutes ahead (3 candles of 5m). Hover on chart for OHLC values.</span>
+            <span>Updating every 30 seconds. All model targets predict 5 minutes ahead (1 candle of 5m). Hover on chart for OHLC values.</span>
             <span>Powered by Supabase & TradingView</span>
         </div>
     </div>
@@ -821,8 +821,8 @@
                 const lastTime = lastCandle.time;
                 const lastClose = lastCandle.close;
 
-                // Prediction target is 3 candles (15 min) ahead of the last 5m candle
-                const futureTime = lastTime + 900;
+                // Prediction target is 1 candle (5 min) ahead of the last 5m candle
+                const futureTime = lastTime + 300;
 
                 // Render Active Models Overlay (Continuous History + Future target)
                 visibleModels.forEach(modelName => {

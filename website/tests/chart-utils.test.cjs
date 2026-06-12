@@ -237,8 +237,9 @@ test('computeModelStats: directional accuracy counts correct calls', () => {
     assert.strictEqual(stats.errorCount, 2);
 });
 
-test('computeModelStats: error average matches computeModelErrors logic', () => {
-    const predHist = [{ time: 900, LSTM: 105.04 }]; // actual 104 -> 1% error
+test('computeModelStats: error uses the next candle close (t+300) as actual', () => {
+    // Prediction at t=600 -> realized = closeAt[900] = 104; 105.04 -> 1% error
+    const predHist = [{ time: 600, LSTM: 105.04 }];
     const stats = computeModelStats(predHist, statCandles, 'LSTM');
     assert.ok(Math.abs(stats.avgError - 1.0) < 1e-9);
     assert.strictEqual(stats.errorCount, 1);
@@ -269,13 +270,14 @@ test('computeModelStats: zero actual move carries no direction', () => {
 });
 
 test('computeModelStats: missing baseline candle skips direction, keeps error', () => {
-    // Only the actual's candle exists; t-600/t-900 closes are absent
-    const sparse = [{ time: 600, c: 104 }];      // closeAt: 900 -> 104... but lastCandleTime=600 < t=900
+    // Realized (t+300) exists but the baseline close at t is absent.
+    // candles -> closeAt keys {900:104, 1200:105}; for t=600, closeAt[900] is the
+    // realized actual, but closeAt[600] (baseline) and closeAt[300] are missing.
     const sparse2 = [{ time: 600, c: 104 }, { time: 900, c: 105 }];
-    const predHist = [{ time: 900, LSTM: 103 }];
+    const predHist = [{ time: 600, LSTM: 103 }];
     const stats = computeModelStats(predHist, sparse2, 'LSTM');
-    assert.strictEqual(stats.errorCount, 1);
-    assert.strictEqual(stats.dirCount, 0);
+    assert.strictEqual(stats.errorCount, 1);     // error vs realized closeAt[900]=104
+    assert.strictEqual(stats.dirCount, 0);       // no baseline -> direction not scored
 });
 
 test('computeModelStats: lastN caps the evaluated predictions', () => {

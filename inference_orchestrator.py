@@ -859,7 +859,7 @@ def run_inference(symbol, db_id):
     # Update Prediction History
     try:
         last_time_dt = df_features['open_time'].iloc[-1]
-        target_time = int(last_time_dt.timestamp() + 900)  # +15 minutes (3 candles)
+        target_time = int(last_time_dt.timestamp() + 300)  # +5 minutes (1 candle) - models forecast 1 step ahead
 
         new_entry = {
             "time": target_time,

@@ -115,10 +115,11 @@
      *
      * Relative error: |predicted - actual| / actual * 100, averaged.
      * Directional accuracy: % of predictions whose direction matched the
-     * actual move. A prediction targeting time t was made 900s (3 candles)
-     * earlier, so the baseline price is the candle close at t-600; the
-     * predicted/actual moves are both measured from that baseline.
-     * Zero moves carry no direction and are excluded from the tally.
+     * actual move. Models forecast 1 candle (5 min) ahead, and a prediction is
+     * stored at t = the predicted candle's open time. Its realized price is that
+     * candle's close = closeAt[t+300]; the baseline (price when the prediction
+     * was made) is the previous close = closeAt[t]. Predicted/actual moves are
+     * measured from that baseline; zero moves carry no direction.
      *
      * opts: { fromSec, toSec, lastN } - window bounds (unix sec, inclusive)
      * and a cap on how many of the most recent matured predictions count.
@@ -143,12 +144,13 @@
             if (raw === null || raw === undefined || !Number.isFinite(pred)) return;
             var t = Number(entry.time);
             if (!Number.isFinite(t) || t > lastCandleTime || t < fromSec || t > toSec) return;
-            var actual = closeAt.get(t);
-            if (actual === undefined) actual = closeAt.get(t - 300);
-            if (actual === undefined) actual = closeAt.get(t + 300);
+            // Realized price = predicted candle's close = closeAt[t+300] (1 candle ahead)
+            var actual = closeAt.get(t + 300);
+            if (actual === undefined) actual = closeAt.get(t);
             if (actual === undefined || actual <= 0) return;
-            var base = closeAt.get(t - 600);
-            if (base === undefined) base = closeAt.get(t - 900);
+            // Baseline = price when the prediction was made = previous close = closeAt[t]
+            var base = closeAt.get(t);
+            if (base === undefined) base = closeAt.get(t - 300);
             matured.push({
                 err: Math.abs(pred - actual) / actual * 100,
                 pred: pred,
