@@ -58,6 +58,7 @@ import math
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.arima.model import ARIMA
+import joblib
 
 # Google Drive API Client imports
 try:
@@ -485,6 +486,24 @@ def infer_arima(close_series):
             print(f"   -> ARIMA fitting failed: {e}")
             return None
 
+def load_training_artifacts(symbol, tag):
+    """Load the StandardScaler + feature list saved by preprocessing for
+    (symbol, tag) where tag is 'lstm' or 'tft'. Using the exact training scaler
+    at inference removes train/serve normalization skew. Returns (scaler, feats)
+    or (None, None) when the artifacts aren't present (older models)."""
+    scaler_path = os.path.join(MODEL_DIR, f'scaler_{tag}_{symbol}.pkl')
+    feat_path = os.path.join(MODEL_DIR, f'features_{tag}_{symbol}.json')
+    if not (os.path.exists(scaler_path) and os.path.exists(feat_path)):
+        return None, None
+    try:
+        scaler = joblib.load(scaler_path)
+        with open(feat_path) as f:
+            feats = json.load(f)
+        return scaler, feats
+    except Exception as e:
+        print(f"   -> ⚠️ Could not load training scaler for {symbol}/{tag}: {e}")
+        return None, None
+
 def initialize():
     global df_hist_dict, scalers_dict, models_lstm, models_tft
 
@@ -516,6 +535,14 @@ def initialize():
                         download_file_from_drive(service, lstm_file, local_lstm_path)
                     if not os.path.exists(local_tft_path):
                         download_file_from_drive(service, tft_file, local_tft_path)
+
+                    # 1b. Download persisted training scalers + feature lists (best-effort;
+                    #     absent for older models, in which case inference refits a scaler)
+                    for art in (f'scaler_lstm_{symbol}.pkl', f'features_lstm_{symbol}.json',
+                                f'scaler_tft_{symbol}.pkl',  f'features_tft_{symbol}.json'):
+                        local_art = os.path.join(MODEL_DIR, art)
+                        if not os.path.exists(local_art):
+                            download_file_from_drive(service, art, local_art)
 
                     # 2. Download historical data CSV if missing
                     csv_file = f'{symbol}_5m_data.csv'
@@ -632,12 +659,33 @@ def initialize():
             else:
                 tft_features_subset = TFT_FEATURES[:14] # fallback
 
-            lstm_scaler = StandardScaler()
-            tft_scaler = StandardScaler()
-            lstm_scaler.fit(df_train[lstm_features_subset])
-            tft_scaler.fit(df_train[tft_features_subset])
+            # Prefer the exact training scaler (saved by preprocessing) so inputs are
+            # normalized identically to training. Only use it when its feature count
+            # matches the loaded model; otherwise refit on the recent train window.
+            lstm_scaler = None
+            if lstm_info is not None:
+                saved_scaler, saved_feats = load_training_artifacts(symbol, 'lstm')
+                if saved_scaler is not None and len(saved_feats) == input_size:
+                    lstm_scaler, lstm_features_subset = saved_scaler, saved_feats
+                    print(f"      -> Using persisted LSTM training scaler ({len(saved_feats)} features).")
+                elif saved_scaler is not None:
+                    print(f"      -> ⚠️ Saved LSTM scaler has {len(saved_feats)} features but model expects {input_size}; refitting.")
+            if lstm_scaler is None:
+                lstm_scaler = StandardScaler().fit(df_train[lstm_features_subset])
+
+            tft_scaler = None
+            if tft_info is not None:
+                saved_scaler, saved_feats = load_training_artifacts(symbol, 'tft')
+                if saved_scaler is not None and len(saved_feats) == num_vars:
+                    tft_scaler, tft_features_subset = saved_scaler, saved_feats
+                    print(f"      -> Using persisted TFT training scaler ({len(saved_feats)} features).")
+                elif saved_scaler is not None:
+                    print(f"      -> ⚠️ Saved TFT scaler has {len(saved_feats)} features but model expects {num_vars}; refitting.")
+            if tft_scaler is None:
+                tft_scaler = StandardScaler().fit(df_train[tft_features_subset])
+
             scalers_dict[symbol] = (lstm_scaler, tft_scaler, lstm_features_subset, tft_features_subset)
-            print(f"      -> Scalers fitted (LSTM features: {len(lstm_features_subset)}, TFT features: {len(tft_features_subset)}).")
+            print(f"      -> Scalers ready (LSTM features: {len(lstm_features_subset)}, TFT features: {len(tft_features_subset)}).")
         else:
             print(f"   -> ⚠️ No historical data found for {symbol}! Will initialize from live fetch.")
             df_hist = fetch_latest_data(symbol, limit=1000)
@@ -735,10 +783,19 @@ def run_inference(symbol, db_id):
         else:
             tft_features_subset = TFT_FEATURES[:14]
 
-        lstm_scaler = StandardScaler()
-        tft_scaler = StandardScaler()
-        lstm_scaler.fit(df_features[lstm_features_subset])
-        tft_scaler.fit(df_features[tft_features_subset])
+        # Prefer the persisted training scaler even on this fallback path
+        lstm_scaler, lstm_feats_saved = load_training_artifacts(symbol, 'lstm')
+        if lstm_scaler is not None and lstm_info is not None and len(lstm_feats_saved) == input_size:
+            lstm_features_subset = lstm_feats_saved
+        else:
+            lstm_scaler = StandardScaler().fit(df_features[lstm_features_subset])
+
+        tft_scaler, tft_feats_saved = load_training_artifacts(symbol, 'tft')
+        if tft_scaler is not None and tft_info is not None and len(tft_feats_saved) == num_vars:
+            tft_features_subset = tft_feats_saved
+        else:
+            tft_scaler = StandardScaler().fit(df_features[tft_features_subset])
+
         scalers_dict[symbol] = (lstm_scaler, tft_scaler, lstm_features_subset, tft_features_subset)
 
     # 4. Infer LSTM
