@@ -457,6 +457,24 @@
             'ARIMA': '#00ffff'        // Cyan
         };
 
+        // Candle/prediction timestamps are UTC Unix seconds, and Lightweight Charts
+        // renders timestamps in UTC. These formatters shift by the viewer's local
+        // offset so the axis + crosshair display LOCAL time. Display-only: the
+        // underlying data stays UTC, so range/gap/filter logic is unaffected.
+        const TZ_OFFSET_SEC = -new Date().getTimezoneOffset() * 60;
+        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        function localTickLabel(utcSec, tickType) {
+            const d = new Date((utcSec + TZ_OFFSET_SEC) * 1000);
+            // tickType < 3 = Year/Month/Day boundary -> show date; otherwise HH:MM
+            if (tickType < 3) return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+            return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+        }
+        function localCrosshairLabel(utcSec) {
+            const d = new Date((utcSec + TZ_OFFSET_SEC) * 1000);
+            return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ` +
+                   `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+        }
+
         if (isSetupComplete) {
             const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
@@ -749,6 +767,10 @@
                         crosshair: {
                             mode: LightweightCharts.CrosshairMode.Normal
                         },
+                        // Crosshair tooltip time -> local
+                        localization: {
+                            timeFormatter: localCrosshairLabel
+                        },
                         rightPriceScale: {
                             borderColor: 'rgba(43, 49, 67, 0.5)',
                             autoScale: autoScaleEnabled,
@@ -758,7 +780,9 @@
                         timeScale: {
                             borderColor: 'rgba(43, 49, 67, 0.5)',
                             timeVisible: true,
-                            secondsVisible: false
+                            secondsVisible: false,
+                            // Axis tick labels -> local time (LWC renders UTC by default)
+                            tickMarkFormatter: localTickLabel
                         }
                     });
 

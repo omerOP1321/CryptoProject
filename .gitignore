@@ -9,6 +9,8 @@ __pycache__/
 
 # Ignore virtual environment
 .venv/
+.venv312/
+.venv_old313/
 venv/
 
 # Ignore large specific files
