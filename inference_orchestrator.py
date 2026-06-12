@@ -55,7 +55,7 @@ import torch
 import torch.nn as nn
 import ta
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.arima.model import ARIMA
 import joblib
@@ -939,6 +939,16 @@ def run_inference(symbol, db_id):
         best = results['predictions'][results['chosen_model']]
         print(f"   -> AI Prediction [{results['chosen_model']}]: ${best['price']:.2f} ({best['change_pct']:+.2f}%)")
 
+def seconds_to_next_boundary(interval_sec=300, offset_sec=10):
+    """Seconds until the next wall-clock interval boundary (every 5 min at
+    :00/:05/:10 ...) plus a small offset so the freshly-opened candle is
+    available from Binance. Anchoring to the real clock - instead of sleeping a
+    fixed 300s after each cycle - prevents cumulative drift, since cycle
+    processing time no longer pushes each run later and later."""
+    now = time.time()
+    next_boundary = (now // interval_sec + 1) * interval_sec + offset_sec
+    return max(1.0, next_boundary - now)
+
 if __name__ == "__main__":
     print("========================================")
     print("   🚀 Crypto AI Prediction Cloud Engine 🚀")
@@ -948,6 +958,7 @@ if __name__ == "__main__":
     initialize()
 
     while True:
+        cycle_start = time.time()
         for symbol, db_id in COINS:
             try:
                 run_inference(symbol, db_id)
@@ -955,6 +966,11 @@ if __name__ == "__main__":
                 print(f"⚠️ Error during inference for {symbol}: {e}")
             time.sleep(5)  # Sleep between coins to prevent API throttling
 
-        print("\n   -> Sleeping for 5 minutes...\n")
-        time.sleep(300)
+        # Align to the real clock, not to when this cycle finished, so updates
+        # fire right after each 5-minute candle opens with no accumulating lag.
+        sleep_for = seconds_to_next_boundary(300, 10)
+        next_run = (datetime.now() + timedelta(seconds=sleep_for)).strftime('%H:%M:%S')
+        print(f"\n   -> Cycle finished in {time.time() - cycle_start:.0f}s. "
+              f"Next update at {next_run} (aligned to 5-min boundary)...\n")
+        time.sleep(sleep_for)
 
