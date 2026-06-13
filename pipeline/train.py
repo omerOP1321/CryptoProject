@@ -17,15 +17,18 @@ Run:  python -m pipeline.train --model lstm --symbol BTCUSDT
 
 import os
 import sys
+import csv
 import json
 import argparse
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pipeline.config import CONFIG, FEATURES, SYMBOLS, OUT_DIR, CLASS_NAMES
+from pipeline.config import CONFIG, SYMBOLS, OUT_DIR, CLASS_NAMES, feature_list
 from pipeline.dataset import load_frame, walk_forward_folds
 from pipeline.models import LSTMDual, TFTDual
 
@@ -93,12 +96,19 @@ def _train_one_fold(model, fold, cfg):
     return model, best
 
 
-def _predict(model, arrs):
-    X = torch.tensor(arrs[0]).to(DEVICE)
+def _predict(model, arrs, batch_size=4096):
+    """Batched inference. The old version pushed the whole test set to the GPU in
+    one forward pass, which OOMs on large test folds / seq_length=120."""
+    X = arrs[0]
     model.eval()
+    prs, pcs = [], []
     with torch.no_grad():
-        pr, pc = model(X)
-    return pr.cpu().numpy(), pc.softmax(-1).cpu().numpy()
+        for i in range(0, len(X), batch_size):
+            xb = torch.tensor(X[i:i + batch_size]).to(DEVICE)
+            pr, pc = model(xb)
+            prs.append(pr.cpu().numpy())
+            pcs.append(pc.softmax(-1).cpu().numpy())
+    return np.concatenate(prs), np.concatenate(pcs)
 
 
 def _evaluate(pred_ret, prob_cls, fold_arrs, cost_bps=2.0):
@@ -134,25 +144,101 @@ def _evaluate(pred_ret, prob_cls, fold_arrs, cost_bps=2.0):
     }
 
 
+LOG_COLUMNS = [
+    "timestamp", "model", "symbol", "horizon_min", "n_features", "use_extra",
+    "seq_length", "max_rows", "wf_folds", "epochs", "train_step",
+    "deadband_k", "cls_w", "lr", "dropout",
+    "DIR", "p", "trades", "ERR", "persist_ERR", "net_bps", "real_edge",
+]
+
+
+def _log_experiment(cfg, model_type, symbol, feats, s):
+    """Append one row to models_v2/experiments_log.csv (on Drive, so it survives
+    runtime restarts) and regenerate a best-first leaderboard experiments_log.md.
+    Runs automatically from run(), so every experiment is captured with its full
+    config -> you can track progress and see exactly what produced the best model."""
+    os.makedirs(OUT_DIR, exist_ok=True)
+    log_csv = os.path.join(OUT_DIR, "experiments_log.csv")
+    row = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "model": model_type, "symbol": symbol, "horizon_min": cfg["horizon"] * 5,
+        "n_features": len(feats), "use_extra": int(bool(cfg.get("use_extra_features"))),
+        "seq_length": cfg["seq_length"], "max_rows": cfg.get("max_rows"),
+        "wf_folds": cfg["wf_folds"], "epochs": cfg["epochs"],
+        "train_step": cfg.get("train_step", 1), "deadband_k": cfg["deadband_k"],
+        "cls_w": cfg["cls_loss_weight"], "lr": cfg["lr"], "dropout": cfg["dropout"],
+        "DIR": round(s["dir"], 2), "p": round(s["p"], 4), "trades": s["trades"],
+        "ERR": round(s["err"], 4), "persist_ERR": round(s["persist"], 4),
+        "net_bps": (round(s["net"], 2) if s["net"] == s["net"] else ""),  # nan -> blank
+        "real_edge": s["edge"],
+    }
+    exists = os.path.exists(log_csv)
+    with open(log_csv, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=LOG_COLUMNS)
+        if not exists:
+            w.writeheader()
+        w.writerow(row)
+    # rebuild a sorted, human-readable leaderboard (no external deps)
+    try:
+        df = pd.read_csv(log_csv)
+        df["_edge"] = (df["real_edge"] == "YES").astype(int)
+        df["_net"] = pd.to_numeric(df["net_bps"], errors="coerce").fillna(-9999)
+        df = df.sort_values(["_edge", "_net", "DIR"], ascending=False).drop(columns=["_edge", "_net"])
+        full = df[df["max_rows"].isna()]
+        hdr = list(df.columns)
+        def table(d):
+            out = ["| " + " | ".join(hdr) + " |", "|" + "|".join(["---"] * len(hdr)) + "|"]
+            for _, r in d.iterrows():
+                out.append("| " + " | ".join("" if pd.isna(r[h]) else str(r[h]) for h in hdr) + " |")
+            return "\n".join(out)
+        md = [f"# Experiments leaderboard (auto-generated)\n",
+              f"_{len(df)} runs, updated {row['timestamp']}. Sorted best-first: "
+              f"REAL EDGE, then net bps, then DIR._\n",
+              "## Full-history runs (max_rows blank = decisive)\n",
+              (table(full) if len(full) else "_none yet — set MAX_ROWS=None for a decisive run._"),
+              "\n## All runs (incl. fast/partial-window probes)\n", table(df)]
+        with open(os.path.join(OUT_DIR, "experiments_log.md"), "w") as f:
+            f.write("\n".join(md))
+    except Exception as e:
+        print(f"   (leaderboard rebuild skipped: {e})")
+    print(f"   logged -> {log_csv}  ({'appended' if exists else 'created'}; run #{_count(log_csv)})")
+
+
+def _count(path):
+    try:
+        with open(path) as f:
+            return sum(1 for _ in f) - 1
+    except Exception:
+        return "?"
+
+
 def run(model_type, symbol, cfg):
-    print(f"\n{'='*64}\n{symbol}  {model_type.upper()}  "
-          f"(horizon={cfg['horizon']*5}m, seq={cfg['seq_length']})\n{'='*64}")
+    feats = feature_list(cfg)
+    print(f"\n{'='*70}\n{symbol}  {model_type.upper()}  "
+          f"(horizon={cfg['horizon']*5}m, seq={cfg['seq_length']}, "
+          f"features={len(feats)}{'+extra' if cfg.get('use_extra_features') else ''}, "
+          f"train_step={cfg.get('train_step',1)}, folds={cfg['wf_folds']}, "
+          f"max_rows={cfg.get('max_rows')})\n{'='*70}")
     df = load_frame(symbol, cfg)
-    print(f"  rows after features/targets: {len(df)}  | features: {len(FEATURES)}")
+    print(f"  data: {len(df)} rows  {str(df['open_time'].iloc[0])[:10]} -> {str(df['open_time'].iloc[-1])[:10]}")
     cls_counts = df["target_cls"].value_counts().to_dict()
     print(f"  class balance: " + ", ".join(f"{CLASS_NAMES[int(k)]}={int(v)}" for k, v in sorted(cls_counts.items())))
 
+    pred_batch = int(cfg.get("pred_batch", 4096))
     agg, last_fold = [], None
     for fold in walk_forward_folds(df, cfg):
         if len(fold["train"][0]) < 20 or len(fold["test"][0]) < 5:
             continue
-        model = _make_model(model_type, len(FEATURES), cfg).to(DEVICE)
+        model = _make_model(model_type, len(feats), cfg).to(DEVICE)
         model, vloss = _train_one_fold(model, fold, cfg)
-        pr, pc = _predict(model, fold["test"])
+        pr, pc = _predict(model, fold["test"], batch_size=pred_batch)
         res = _evaluate(pr, pc, fold["test"])
         res["fold"] = fold["fold"]; res["val_loss"] = vloss
         agg.append(res); last_fold = (model, fold)
-        print(f"  fold {fold['fold']}: test n={res['n_test']:4d} trades={res['n_trades']:4d} "
+        d = fold["dates"]
+        print(f"  fold {fold['fold']}: train {d['train'][0]}..{d['train'][1]} "
+              f"test {d['test'][0]}..{d['test'][1]} | "
+              f"n={res['n_test']} trades={res['n_trades']} "
               f"DIR={res['dir_acc']:5.1f}% (p={res['binom_p']:.3f}) "
               f"ERR={res['err']:.4f}% vs persist {res['persist_err']:.4f}% "
               f"net={res['net_bps']:+.1f}bps")
@@ -168,11 +254,16 @@ def run(model_type, symbol, cfg):
     pooled_p = _binom_p(tot_hits, tot_trades)
     mean_err = np.mean([r["err"] for r in agg])
     mean_persist = np.mean([r["persist_err"] for r in agg])
-    mean_net = np.mean([r["net_bps"] for r in agg])
+    mean_net = np.nanmean([r["net_bps"] for r in agg])  # folds with 0 trades are nan
     beats = "YES" if (pooled_p < 0.05 and pooled_dir > 50 and mean_err < mean_persist) else "no"
     print(f"  --> POOLED OOS: DIR={pooled_dir:.1f}% (p={pooled_p:.3f}, {tot_hits}/{tot_trades}) "
           f"ERR={mean_err:.4f}% vs persist {mean_persist:.4f}%  net={mean_net:+.1f}bps  "
           f"REAL EDGE: {beats}")
+
+    # automatic experiment log (config + result) -> Drive
+    _log_experiment(cfg, model_type, symbol, feats,
+                    {"dir": pooled_dir, "p": pooled_p, "trades": tot_trades,
+                     "err": mean_err, "persist": mean_persist, "net": mean_net, "edge": beats})
 
     # save the most-recent-fold model as the staged candidate
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -181,9 +272,10 @@ def run(model_type, symbol, cfg):
     tag = f"{model_type}_{symbol}"
     torch.save(model.state_dict(), os.path.join(OUT_DIR, f"v2_{tag}.pth"))
     joblib.dump(fold["scaler"], os.path.join(OUT_DIR, f"scaler_{tag}.pkl"))
-    meta = {"symbol": symbol, "model_type": model_type, "features": FEATURES,
+    meta = {"symbol": symbol, "model_type": model_type, "features": feats,
             "horizon": cfg["horizon"], "seq_length": cfg["seq_length"],
             "deadband_k": cfg["deadband_k"], "class_names": CLASS_NAMES,
+            "use_extra_features": bool(cfg.get("use_extra_features")),
             "pooled_dir": pooled_dir, "pooled_p": pooled_p,
             "mean_err": mean_err, "mean_persist_err": mean_persist}
     with open(os.path.join(OUT_DIR, f"meta_{tag}.json"), "w") as f:

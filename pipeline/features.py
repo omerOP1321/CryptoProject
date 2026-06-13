@@ -84,6 +84,24 @@ def compute_features(df: pd.DataFrame, vol_window: int = None) -> pd.DataFrame:
     avg_trade = np.log(quote_vol / (n_trades + EPS) + 1)
     df["trade_size"] = _causal_z(avg_trade, vol_window)
 
+    # --- Extra features (used only when cfg['use_extra_features']; always computed
+    #     here so inference can select whatever a model's meta lists). All causal. ---
+    df["rv"] = _causal_z(df["log_ret"].rolling(12).std(), vol_window)
+    tr = pd.concat([(df["high"] - df["low"]),
+                    (df["high"] - c.shift()).abs(),
+                    (df["low"] - c.shift()).abs()], axis=1).max(axis=1)
+    df["atr_pct"] = (tr.rolling(14).mean() / (c + EPS)) * 100
+    df["buy_imb_ma"] = df["taker_buy_imb"].rolling(12).mean()
+    signed_vol = df["taker_buy_imb"] * np.log(df["volume"] + 1)
+    df["cvd_z"] = _causal_z(signed_vol.rolling(48).sum(), vol_window)
+    ema_f = c.ewm(span=12, adjust=False).mean()
+    ema_s = c.ewm(span=48, adjust=False).mean()
+    df["trend_mtf"] = (ema_f - ema_s) / (c + EPS) * 100
+    rng = (df["high"] - df["low"])
+    df["range_pos"] = ((c - df["low"]) / (rng + EPS)).clip(0, 1)
+    df["dist_hi20"] = (c - df["high"].rolling(20).max()) / (c + EPS) * 100
+    df["dist_lo20"] = (c - df["low"].rolling(20).min()) / (c + EPS) * 100
+
     return df
 
 

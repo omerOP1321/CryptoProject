@@ -26,20 +26,33 @@ is untouched until you deliberately promote new models.
 - `train.py` — walk-forward trainer, honest OOS evaluation, saves `models_v2/`.
 - `infer.py` — production-shaped prediction from a staged model.
 
-## How to run (Google Colab, full history)
+## How to run (Google Colab) — `pipeline/v2_train_colab.ipynb`
 
-```python
-# 1. Mount Drive so data/*.csv is the FULL history (not the local 1k-row cache)
-from google.colab import drive; drive.mount('/content/drive')
-%cd /content/drive/MyDrive/CryptoProject
-!pip -q install ta scikit-learn torch joblib scipy
+Self-contained (only `data/*.csv` needs to be on Drive — **not** the `pipeline/`
+folder). It's an **experiment workbench**, not a run-all script:
 
-# 2. Train all coins x models at the deployed 5-min horizon
-!python -m pipeline.train --all
+- **First time / after restart:** run Cell 1 (setup) → 2 (engine code) → 3 (config) → 4 (run one experiment).
+- **Iterate fast:** edit the knobs in **Cell 3**, re-run Cell 3 + Cell 4. Each
+  experiment tests one model/coin/horizon with a default **fast** config
+  (`max_rows=150k`, `wf_folds=1`, `epochs=8`, `train_step=2`).
+- **Sweep** horizons / coins / feature-sets in Cell 5.
+- **Deploy:** Cell 6 trains the full-quality 5-minute models for the dashboard.
 
-# 3. Sweep the horizon to see where a real edge appears (audit item #7)
-for h in [1, 3, 6, 12]:
-    !python -m pipeline.train --all --horizon {h}
+Speed knobs (in `config.py`, overridable per run): `max_rows` (subsample recent
+history), `train_step` (training-window stride), `wf_folds`, `epochs`,
+`pred_batch` (batched inference — fixes the seq_length=120 OOM).
+Feature lever: `use_extra_features=True` adds 8 causal features (volatility /
+sustained order-flow / multi-timeframe) → 26 total.
+
+> The notebook is generated from the `.py` modules in this folder, so keep the
+> two in sync: if you change a module, regenerate the notebook (ask Claude) so
+> the inlined copy matches what `infer.py` uses in production.
+
+Prefer the CLI instead? On a machine that has the repo checked out (incl. `pipeline/`):
+
+```bash
+python -m pipeline.train --all                 # all coins x models, 5-min
+for h in 1 3 6 12; do python -m pipeline.train --all --horizon $h; done  # sweep
 ```
 
 Each run prints, per fold and pooled across folds:
@@ -56,14 +69,23 @@ python -m pipeline.infer                # produces a production-shaped predictio
 (Smoke-test numbers are meaningless — only ~1k cached candles, 2 epochs — they
 just confirm the pipeline executes end-to-end.)
 
-## Promoting to production (only after validation)
+## Live champion/challenger (already wired)
+
+You do **not** need to change `inference_orchestrator` to compare. The v2
+inference code is **inlined** there (classes + `compute_features_v2` +
+`v2_load_model` / `v2_predict`), so as soon as `models_v2/` exists on Drive the
+engine loads it and pushes `LSTM_v2` / `Transformer_v2` alongside the legacy
+models. The dashboard shows both sets of cards (same ERR/DIR scoring) and chart
+overlays. Until the artifacts exist, the engine runs legacy-only.
+
+> The inlined defs in `inference_orchestrator` are copies of `features.py` /
+> `models.py` / `infer.py`. If you change those modules, re-inline (ask Claude)
+> so the live engine matches what trained the weights.
+
+## Promoting (retiring the legacy models, only after validation)
 1. Confirm `REAL EDGE: YES` (or at least a significant, cost-positive DIR) on the full-history run.
-2. Copy the chosen `models_v2/v2_*.pth`, `scaler_*.pkl`, `meta_*.json` into `models/` under new names.
-3. In `inference_orchestrator.py`, replace the LSTM/TFT load+predict+reconstruct
-   blocks with `pipeline.infer.load_model` / `pipeline.infer.predict` (return-based
-   reconstruction; signal from the classifier). Keep ARIMA as the baseline.
-4. Re-point `eval_harness.py` at the new history and confirm the live scorecard
-   matches the offline OOS estimate before trusting it.
+2. Let v2 run live for a while and confirm its dashboard ERR/DIR matches the offline OOS estimate.
+3. Once v2 clearly wins, you can drop the legacy LSTM/TFT blocks and make v2 the default (keep ARIMA as a baseline).
 
 > Expectation: even a fully-tuned model is unlikely to clear ~53–56% robust,
 > cost-aware DIR at 5 min (the task is near-efficient — see the audit). The

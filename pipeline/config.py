@@ -50,21 +50,47 @@ CONFIG = {
     "wf_folds": 5,         # number of rolling test folds
     "wf_test_frac": 0.10,  # each test fold = this fraction of the series
     "wf_val_frac": 0.10,   # validation block right before each test fold
+    # --- fast-experiment knobs (cut run time when you're only checking direction) ---
+    "max_rows": None,      # cap to most recent N candles (None = full history). e.g. 150000 ~ last ~1.4yr
+    "train_step": 1,       # stride for TRAINING windows (1=all; 4 => 4x fewer train samples, val/test stay 1)
+    "pred_batch": 4096,    # batch size for inference (fixes the seq_length=120 OOM)
+    # --- feature set ---
+    "use_extra_features": False,  # True => add the FEATURES_EXTRA block (volatility / order-flow / MTF)
     # --- smoke test (tiny run on local cached CSV to prove the code executes) ---
     "smoke": False,
 }
 
-# Base + order-flow feature set. Order-flow block is the new, previously-unused
-# information. Everything is causal (no future leakage).
-FEATURES = [
+# Base + order-flow feature set. Everything is causal (no future leakage).
+FEATURES_BASE = [
     "log_ret", "rsi", "rsi_change", "rsi_accel",
     "macd", "macd_slope", "bb_pband_change", "ma_dist",
     "volume_z", "vol_spike", "adx",
     "hour_sin", "hour_cos", "mom_3", "mom_5",
-    # --- order flow (NEW) ---
+    # --- order flow ---
     "taker_buy_imb",   # 2*taker_buy_frac - 1  in [-1,1]; >0 = aggressive buying
     "trade_intensity", # causal z-score of log(number_of_trades)
     "trade_size",      # causal z-score of log(quote_volume / number_of_trades)
 ]
+
+# Optional extra block (enabled via cfg['use_extra_features']) — volatility,
+# sustained order-flow, multi-timeframe trend, candle geometry. The lever to
+# test whether richer features help (audit improvement #6). All causal.
+FEATURES_EXTRA = [
+    "rv",          # realized vol (1h rolling std of log_ret), causal z-scored
+    "atr_pct",     # ATR(14) / close * 100
+    "buy_imb_ma",  # sustained taker-buy imbalance (rolling mean)
+    "cvd_z",       # cumulative volume delta over a window, causal z-scored
+    "trend_mtf",   # multi-timeframe trend: (EMA12 - EMA48)/close
+    "range_pos",   # where close sits in the candle range [0,1]
+    "dist_hi20",   # distance to 20-bar high (breakout proximity)
+    "dist_lo20",   # distance to 20-bar low
+]
+
+# Backward-compatible default (the base set).
+FEATURES = FEATURES_BASE
+
+def feature_list(cfg):
+    """The feature columns a run uses, per cfg['use_extra_features']."""
+    return FEATURES_BASE + FEATURES_EXTRA if cfg.get("use_extra_features") else FEATURES_BASE
 
 CLASS_NAMES = ["DOWN", "FLAT", "UP"]  # indices 0,1,2
