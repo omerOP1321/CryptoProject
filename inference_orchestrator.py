@@ -480,7 +480,10 @@ def infer_arima(close_series):
         try:
             model = ARIMA(close_series, order=(2, 1, 0))
             model_fit = model.fit()
-            forecast = model_fit.forecast(steps=3)
+            # Forecast exactly 1 candle (5 min) ahead so the horizon matches how
+            # the prediction is stored/scored (target_time = last + 300). The old
+            # steps=3 forecast 15 min ahead but was evaluated at 5-min maturity.
+            forecast = model_fit.forecast(steps=1)
             return float(forecast.iloc[-1])
         except Exception as e:
             print(f"   -> ARIMA fitting failed: {e}")
@@ -865,7 +868,10 @@ def run_inference(symbol, db_id):
             "time": target_time,
             "LSTM": results["predictions"]["LSTM"]["price"] if "LSTM" in results["predictions"] else None,
             "ARIMA": results["predictions"]["ARIMA"]["price"] if "ARIMA" in results["predictions"] else None,
-            "Transformer": results["predictions"]["Transformer"]["price"] if "Transformer" in results["predictions"] else None
+            "Transformer": results["predictions"]["Transformer"]["price"] if "Transformer" in results["predictions"] else None,
+            # Track the Ensemble too: it is the chosen_model, so the dashboard /
+            # eval harness must be able to score it like any other model.
+            "Ensemble": results["predictions"]["Ensemble"]["price"] if "Ensemble" in results["predictions"] else None
         }
 
         history_list = results.get("prediction_history", [])

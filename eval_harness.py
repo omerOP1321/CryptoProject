@@ -298,7 +298,9 @@ def print_scorecard(last_n=None, use_supabase=True):
             print(f"   {'model':<12}{'n':>5}{'ERR%':>9}{'DIR%':>8}{'95%CI':>16}"
                   f"{'binom p':>10}{'edge bps':>10}{'verdict':>14}")
             persist_err = base.get("B1_B2_persist_err") if base else None
-            for model in ("LSTM", "Transformer", "ARIMA"):
+            # Ensemble is scored too once the engine starts writing it to history
+            # (entries created before that fix simply have no Ensemble value).
+            for model in ("LSTM", "Transformer", "ARIMA", "Ensemble"):
                 recs = matured_records(payload, model, last_n=last_n)
                 s = score_model(recs)
                 if not s:

@@ -2,7 +2,7 @@
 
 The main objective of this project is to build a full machine-learning pipeline that predicts future cryptocurrency prices (starting with Bitcoin).
 The project begins with a reliable data-collection layer from the Binance API, and will include preprocessing, feature engineering (technical indicators), 
-model training (LSTM/Random Forest Regressor,XGBoost Regressor),evaluation, and a live forecasting module.
+model training (LSTM / TFT Transformer / ARIMA), evaluation, and a live forecasting module.
 ---
 ## 📌 Features 
 * Fetches historical candlestick (kline) data from Binance.
@@ -79,8 +79,8 @@ The preprocessing pipeline performs multiple cleaning and preparation steps on h
 
 The model uses fixed-length sliding windows for time-series forecasting:
 
-- Sequence Length: `120`
-- Prediction Horizon: `1 step ahead`
+- Sequence Length: `60`
+- Prediction Horizon: `1 step ahead` (one 5-minute candle)
 - Sliding Window Step Size: `5`
 
 Generated datasets:
