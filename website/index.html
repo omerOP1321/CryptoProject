@@ -154,6 +154,28 @@
             text-transform: uppercase;
         }
 
+        /* Self-contained model card rows */
+        .model-card b { margin-bottom: 6px; }
+        .model-line {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 10px;
+            font-size: 0.82em;
+            padding: 6px 0;
+            border-top: 1px solid var(--border-color);
+        }
+        .model-line .lbl {
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 0.88em;
+        }
+        .model-line .val { font-weight: 600; color: var(--text-main); }
+        .sig-buy { color: var(--green); }
+        .sig-sell { color: var(--red); }
+        .sig-neutral { color: var(--text-muted); }
+
         input[type="datetime-local"].btn {
             color-scheme: dark;
             font-family: 'Outfit', sans-serif;
@@ -644,11 +666,10 @@
             }
 
 
-            // Per-model accuracy over the selected time window:
-            // - relative error: |predicted - actual| / actual, averaged
-            // - directional accuracy: % of predictions that called the move
-            //   direction correctly (up vs down from when they were made)
-            // Actual prices come from the 5m candle history in the payload.
+            // Render one self-contained card per model. Each card draws ONLY from that
+            // model's own data: historical accuracy (ERR/DIR/matured over the selected
+            // window) plus its live prediction (predicted price, expected 5-min change,
+            // BUY/SELL/NEUTRAL signal) and the prediction/target candle times.
             function renderModelErrors(fromSec, toSec) {
                 const container = document.getElementById('error-metrics');
                 const hist5m = (globalPayload.history && globalPayload.history['5m']) || [];
@@ -659,25 +680,52 @@
                     return;
                 }
 
+                const preds = globalPayload.predictions || {};
+                // Both timestamps are shared across models: the prediction is made from
+                // the latest candle and forecasts the next one (+5 min).
+                const lastOpen = hist5m[hist5m.length - 1].time;
+                const targetSec = lastOpen + 300;
+                const fmtHM = sec => {
+                    const d = new Date((sec + TZ_OFFSET_SEC) * 1000);
+                    return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+                };
+                const fmtPrice = p => '$' + Number(p).toLocaleString(undefined,
+                    { minimumFractionDigits: p < 10 ? 4 : 2, maximumFractionDigits: p < 10 ? 4 : 2 });
+
                 const cards = [];
                 Object.keys(MODEL_COLORS).forEach(modelName => {
-                    if (!globalPayload.predictions || !globalPayload.predictions[modelName]) return;
+                    const pd = preds[modelName];
+                    if (!pd) return;
 
+                    // Accuracy from this model's own matured predictions (windowed)
                     const stats = ChartUtils.computeModelStats(predHist, hist5m, modelName,
                         { fromSec, toSec, lastN: 200 });
                     const label = modelName === 'Transformer' ? 'TFT' : modelName;
                     const color = MODEL_COLORS[modelName];
                     const err = stats.avgError !== null ? stats.avgError.toFixed(2) + '%' : '—';
                     const dir = stats.dirAccuracy !== null ? stats.dirAccuracy.toFixed(0) + '%' : '—';
-                    const note = stats.errorCount
-                        ? `${stats.errorCount} matured prediction${stats.errorCount > 1 ? 's' : ''} in range`
-                        : 'no matured predictions in range';
+
+                    // Live prediction + per-model signal (BUY/SELL/NEUTRAL from its own change)
+                    const chg = pd.change_pct;
+                    const chgStr = `${chg > 0 ? '+' : ''}${chg.toFixed(2)}%`;
+                    let sig, sigClass;
+                    if (chg > 0.1) { sig = 'BUY'; sigClass = 'sig-buy'; }
+                    else if (chg < -0.1) { sig = 'SELL'; sigClass = 'sig-sell'; }
+                    else { sig = 'NEUTRAL'; sigClass = 'sig-neutral'; }
 
                     cards.push(
-                        `<div class="metric"><small>${label} Accuracy</small>` +
-                        `<b style="color:${color}">${err} <span class="metric-sub">err</span>` +
-                        `&nbsp; ${dir} <span class="metric-sub">dir</span></b>` +
-                        `<span class="error-samples">${note}</span></div>`
+                        `<div class="metric model-card">` +
+                        `<small style="color:${color}">${label}</small>` +
+                        `<b style="color:${color}">${fmtPrice(pd.price)}</b>` +
+                        `<div class="model-line"><span class="lbl">Expected 5m</span>` +
+                            `<span class="val ${sigClass}">${chgStr} · ${sig}</span></div>` +
+                        `<div class="model-line"><span class="lbl">Accuracy</span>` +
+                            `<span class="val">${err} err · ${dir} dir</span></div>` +
+                        `<div class="model-line"><span class="lbl">Matured</span>` +
+                            `<span class="val">${stats.errorCount}</span></div>` +
+                        `<div class="model-line"><span class="lbl">Candle</span>` +
+                            `<span class="val">${fmtHM(lastOpen)} → ${fmtHM(targetSec)}</span></div>` +
+                        `</div>`
                     );
                 });
 
