@@ -23,3 +23,7 @@ venv/
 supabase_creds.json
 credentials.json
 token.json
+
+#Ignor plans and reports
+audit_report.md
+model_audit.md
