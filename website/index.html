@@ -342,9 +342,6 @@
             <!-- Metrics Panels -->
             <div class="metrics">
                 <div class="metric"><small>Last Market Price</small><b id="last-price">$0.00</b></div>
-                <div class="metric"><small>Consensus Model</small><b id="chosen-model" style="color: var(--primary);">None</b></div>
-                <div class="metric"><small>Expected Change (next 5 min)</small><b id="change-pct">+0.00%</b></div>
-                <div class="metric"><small>Signal Recommendation</small><b id="signal">NEUTRAL</b></div>
             </div>
 
             <!-- Per-model recent accuracy (relative error of matured predictions) -->
@@ -720,24 +717,10 @@
                 document.getElementById('content').style.display = 'block';
 
                 const lastPrice = globalPayload.last_price;
-                const chosenModel = globalPayload.chosen_model;
                 const predictions = globalPayload.predictions;
 
                 // 1. Render metrics panels
                 document.getElementById('last-price').innerText = `$${lastPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
-                document.getElementById('chosen-model').innerText = chosenModel === 'Transformer' ? 'TFT' : chosenModel;
-
-                const consensusPrediction = predictions[chosenModel];
-                if (consensusPrediction) {
-                    const changePct = consensusPrediction.change_pct;
-                    document.getElementById('change-pct').innerText = `${changePct > 0 ? '+' : ''}${changePct.toFixed(2)}%`;
-                    document.getElementById('change-pct').className = changePct > 0 ? 'signal-long' : 'signal-short';
-                    
-                    const signalElem = document.getElementById('signal');
-                    if (changePct > 0.1) { signalElem.innerText = 'LONG 🟢'; signalElem.className = 'signal-long'; }
-                    else if (changePct < -0.1) { signalElem.innerText = 'SHORT 🔴'; signalElem.className = 'signal-short'; }
-                    else { signalElem.innerText = 'NEUTRAL ⚪'; signalElem.className = 'signal-neutral'; }
-                }
 
                 // 1b. Render per-model accuracy cards for the selected window
                 renderModelErrors(rangeFromSec, rangeToSec);
