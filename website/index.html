@@ -414,6 +414,14 @@
                             <input type="checkbox" id="chk-arima" checked onchange="toggleModel('ARIMA')">
                             <span style="color: #00ffff;">ARIMA</span>
                         </label>
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="chk-lstm_v2" checked onchange="toggleModel('LSTM_v2')">
+                            <span style="color: #ff8800;">LSTM v2</span>
+                        </label>
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="chk-tft_v2" checked onchange="toggleModel('Transformer_v2')">
+                            <span style="color: #00ff88;">TFT v2</span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -438,7 +446,7 @@
         
         let activeCoin = 'BTCUSDT';
         let activeCoinId = 1;
-        let visibleModels = ['LSTM', 'Transformer', 'ARIMA'];
+        let visibleModels = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
 
         // Time range selection. The candle resolution is derived from the range:
         // All ranges render 5-minute candles. Max preset is 7D because the backend
@@ -469,11 +477,30 @@
         let autoScaleEnabled = localStorage.getItem('autoScaleEnabled') !== 'false';
         let priceLinesEnabled = localStorage.getItem('priceLinesEnabled') !== 'false';
 
-        // Colors configurations for overlay models
+        // Colors configurations for overlay models. The *_v2 entries are the
+        // staged challenger models (return-based + direction head). They appear
+        // automatically once the backend starts writing them; until then their
+        // cards/lines simply don't render (no data => skipped).
         const MODEL_COLORS = {
-            'LSTM': '#ffcc00',        // Yellow
-            'Transformer': '#ff00ff', // Magenta
-            'ARIMA': '#00ffff'        // Cyan
+            'LSTM': '#ffcc00',           // Yellow
+            'Transformer': '#ff00ff',    // Magenta
+            'ARIMA': '#00ffff',          // Cyan
+            'LSTM_v2': '#ff8800',        // Orange   (challenger)
+            'Transformer_v2': '#00ff88'  // Green    (challenger)
+        };
+
+        // Display labels (card title + chart legend). Falls back to the key.
+        const MODEL_LABELS = {
+            'Transformer': 'TFT',
+            'LSTM_v2': 'LSTM v2',
+            'Transformer_v2': 'TFT v2'
+        };
+        const labelOf = m => MODEL_LABELS[m] || m;
+
+        // Map a model key -> its overlay checkbox id suffix.
+        const CHK_ID = {
+            'LSTM': 'lstm', 'Transformer': 'tft', 'ARIMA': 'arima',
+            'LSTM_v2': 'lstm_v2', 'Transformer_v2': 'tft_v2'
         };
 
         // Candle/prediction timestamps are UTC Unix seconds, and Lightweight Charts
@@ -654,7 +681,7 @@
             }
 
             function toggleModel(modelName) {
-                const isChecked = document.getElementById(`chk-${modelName === 'Transformer' ? 'tft' : modelName.toLowerCase()}`).checked;
+                const isChecked = document.getElementById(`chk-${CHK_ID[modelName] || modelName.toLowerCase()}`).checked;
                 
                 if (isChecked) {
                     if (!visibleModels.includes(modelName)) visibleModels.push(modelName);
@@ -700,7 +727,7 @@
                     // Accuracy from this model's own matured predictions (windowed)
                     const stats = ChartUtils.computeModelStats(predHist, hist5m, modelName,
                         { fromSec, toSec, lastN: 200 });
-                    const label = modelName === 'Transformer' ? 'TFT' : modelName;
+                    const label = labelOf(modelName);
                     const color = MODEL_COLORS[modelName];
                     const err = stats.avgError !== null ? stats.avgError.toFixed(2) + '%' : '—';
                     const dir = stats.dirAccuracy !== null ? stats.dirAccuracy.toFixed(0) + '%' : '—';
@@ -957,7 +984,7 @@
                                 lineWidth: 2,
                                 lineStyle: LightweightCharts.LineStyle.Dotted,
                                 axisLabelVisible: true,
-                                title: modelName
+                                title: labelOf(modelName)
                             });
                         }
 
@@ -968,7 +995,7 @@
                                 position: 'inBar',
                                 color: changePct > 0 ? '#00e676' : '#ff3d71',
                                 shape: 'circle',
-                                text: `${modelName === 'Transformer' ? 'TFT' : modelName}`
+                                text: `${labelOf(modelName)}`
                             }
                         ]);
                     }

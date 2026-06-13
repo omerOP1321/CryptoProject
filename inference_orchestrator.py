@@ -267,6 +267,10 @@ df_hist_dict = {}
 scalers_dict = {}
 models_lstm = {}
 models_tft = {}
+# Challenger (v2) models from the staged pipeline/ — return-based + direction
+# head. Optional: stays empty unless models_v2/ artifacts exist.
+models_v2_dict = {}
+v2_predict = None
 
 # Default features (9 features)
 LSTM_FEATURES = [
@@ -724,6 +728,37 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # --- 5. Main Loop ---
 
+def init_v2():
+    """Best-effort load of the staged challenger (v2) models from models_v2/.
+    Strictly optional: if the pipeline package or artifacts are absent, the live
+    engine runs exactly as before with only the legacy models. This lets the
+    dashboard show legacy vs. v2 side by side (champion/challenger)."""
+    global v2_predict
+    try:
+        if DRIVE_BASE_DIR not in sys.path:
+            sys.path.insert(0, DRIVE_BASE_DIR)
+        from pipeline.infer import load_model as _v2load, predict as _v2pred
+        v2_predict = _v2pred
+    except Exception as e:
+        print(f"[Init] v2 challenger pipeline not available ({e}). Running legacy-only.")
+        return
+    for symbol, _ in COINS:
+        entry = {}
+        for mt in ('lstm', 'tft'):
+            try:
+                entry[mt] = _v2load(mt, symbol)
+                print(f"   -> v2 {mt.upper()} model for {symbol} loaded.")
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                print(f"   -> v2 {mt} load failed for {symbol}: {e}")
+        if entry:
+            models_v2_dict[symbol] = entry
+    if not models_v2_dict:
+        print("[Init] No v2 artifacts found in models_v2/. Train them on Colab first "
+              "(see pipeline/README.md), then they appear on the dashboard automatically.")
+
+
 def run_inference(symbol, db_id):
     global df_hist_dict
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching latest data for {symbol}...")
@@ -859,6 +894,31 @@ def run_inference(symbol, db_id):
     else:
         results["chosen_model"] = "None"
 
+    # 7b. Challenger v2 predictions (return-based price + direction head). Additive
+    # and fully guarded so any v2 error never blocks the legacy push. Deliberately
+    # computed AFTER the Ensemble above so the champion ensemble is unchanged.
+    v2_hist_entries = {}
+    if v2_predict is not None and symbol in models_v2_dict:
+        for mt, name in (('lstm', 'LSTM_v2'), ('tft', 'Transformer_v2')):
+            entry = models_v2_dict[symbol].get(mt)
+            if not entry:
+                continue
+            try:
+                mdl, scaler, meta = entry
+                out = v2_predict(df_hist.tail(2000), mdl, scaler, meta)
+                if not out:
+                    continue
+                results["predictions"][name] = {
+                    "val": out["val"], "price": out["price"],
+                    "change_pct": out["change_pct"], "signal": out["signal"]
+                }
+                # Only score in history when v2 forecasts the same 5-min horizon
+                # the dashboard matures against (avoids mis-scoring longer horizons).
+                if meta.get("horizon") == 1:
+                    v2_hist_entries[name] = out["price"]
+            except Exception as e:
+                print(f"   -> v2 {name} inference failed: {e}")
+
     # Update Prediction History
     try:
         last_time_dt = df_features['open_time'].iloc[-1]
@@ -873,6 +933,7 @@ def run_inference(symbol, db_id):
             # eval harness must be able to score it like any other model.
             "Ensemble": results["predictions"]["Ensemble"]["price"] if "Ensemble" in results["predictions"] else None
         }
+        new_entry.update(v2_hist_entries)
 
         history_list = results.get("prediction_history", [])
         history_df = pd.DataFrame(history_list)
@@ -962,6 +1023,7 @@ if __name__ == "__main__":
     print("Press Ctrl+C to stop the engine and save data safely to Drive.")
 
     initialize()
+    init_v2()
 
     while True:
         cycle_start = time.time()
