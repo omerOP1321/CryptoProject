@@ -262,15 +262,224 @@ class TFTModel(nn.Module):
         return self.fc(x[:, -1, :])
 
 
+# --- 2b. v2 Challenger (INLINED) ------------------------------------------
+# The staged challenger pipeline (log-return target + 3-class direction head,
+# order-flow features, causal scaling) is inlined here so the live engine needs
+# ONLY the trained artifacts in models_v2/ on Drive — no pipeline/ code folder.
+# Keep these defs in sync with pipeline/{features,models,infer}.py.
+V2_DIR = os.path.join(DRIVE_BASE_DIR, 'models_v2')
+# v2 models are now organized per prediction-horizon (models_v2/{N}min/). Point the
+# live engine at the deployed horizon; bump this to switch which horizon goes live.
+V2_HORIZON_MIN = 60
+V2_MODEL_DIR = os.path.join(V2_DIR, f'{V2_HORIZON_MIN}min')
+V2_VOL_WINDOW = 288
+V2_CLASS_NAMES = ["DOWN", "FLAT", "UP"]
+V2_FEATURES = [
+    'log_ret', 'rsi', 'rsi_change', 'rsi_accel', 'macd', 'macd_slope',
+    'bb_pband_change', 'ma_dist', 'volume_z', 'vol_spike', 'adx',
+    'hour_sin', 'hour_cos', 'mom_3', 'mom_5',
+    'taker_buy_imb', 'trade_intensity', 'trade_size'
+]
+_V2_EPS = 1e-9
+
+def _v2_causal_z(series, window):
+    mean = series.rolling(window, min_periods=window // 4).mean()
+    std = series.rolling(window, min_periods=window // 4).std()
+    return (series - mean) / (std + _V2_EPS)
+
+def compute_features_v2(df, vol_window=V2_VOL_WINDOW):
+    """Causal feature engineering for the v2 models (mirrors pipeline/features.py)."""
+    df = df.copy()
+    df["open_time"] = pd.to_datetime(df["open_time"])
+    df = df.sort_values("open_time").drop_duplicates("open_time").reset_index(drop=True)
+    c = df["close"]
+    df["log_ret"] = np.log(c / c.shift(1))
+    df["rsi"] = ta.momentum.rsi(c, window=14) / 100.0
+    df["rsi_change"] = df["rsi"].diff(3)
+    df["rsi_accel"] = df["rsi_change"].diff(2)
+    macd = ta.trend.MACD(c)
+    macd_raw = macd.macd_diff()
+    df["macd"] = (macd_raw - macd_raw.rolling(100).mean()) / (macd_raw.rolling(100).std() + _V2_EPS)
+    df["macd_slope"] = macd.macd_diff().diff(2)
+    bb = ta.volatility.BollingerBands(c, window=20, window_dev=2)
+    df["bb_pband"] = bb.bollinger_pband()
+    df["bb_pband_change"] = df["bb_pband"].diff(1)
+    df["bb_hband"] = bb.bollinger_hband()
+    df["bb_lband"] = bb.bollinger_lband()
+    df["ma_20"] = c.rolling(20).mean()
+    df["ma_dist"] = (c - df["ma_20"]) / (df["ma_20"] + _V2_EPS) * 10.0
+    log_vol = np.log(df["volume"] + 1)
+    df["volume_z"] = _v2_causal_z(log_vol, vol_window)
+    vol_ma = log_vol.rolling(20).mean()
+    df["vol_spike"] = (log_vol > (vol_ma * 2)).astype(float)
+    adx = ta.trend.ADXIndicator(df["high"], df["low"], c, window=14)
+    df["adx"] = adx.adx()
+    hour = df["open_time"].dt.hour
+    df["hour_sin"] = np.sin(2 * np.pi * hour / 24)
+    df["hour_cos"] = np.cos(2 * np.pi * hour / 24)
+    df["mom_3"] = c / c.shift(3) - 1
+    df["mom_5"] = c / c.shift(5) - 1
+    taker_buy = df.get("taker_buy_base_asset_volume")
+    if taker_buy is not None:
+        taker_buy = pd.to_numeric(taker_buy, errors="coerce")
+        buy_frac = (taker_buy / (df["volume"] + _V2_EPS)).clip(0, 1)
+        df["taker_buy_imb"] = 2 * buy_frac - 1.0
+    else:
+        df["taker_buy_imb"] = 0.0
+    n_trades = pd.to_numeric(df.get("number_of_trades", np.nan), errors="coerce")
+    df["trade_intensity"] = _v2_causal_z(np.log(n_trades + 1), vol_window)
+    quote_vol = pd.to_numeric(df.get("quote_asset_volume", np.nan), errors="coerce")
+    avg_trade = np.log(quote_vol / (n_trades + _V2_EPS) + 1)
+    df["trade_size"] = _v2_causal_z(avg_trade, vol_window)
+    # Extra features (used only by models whose meta lists them; always computed
+    # so v2_predict can select meta['features']). Mirrors pipeline/features.py.
+    df["rv"] = _v2_causal_z(df["log_ret"].rolling(12).std(), vol_window)
+    tr = pd.concat([(df["high"] - df["low"]),
+                    (df["high"] - c.shift()).abs(),
+                    (df["low"] - c.shift()).abs()], axis=1).max(axis=1)
+    df["atr_pct"] = (tr.rolling(14).mean() / (c + _V2_EPS)) * 100
+    df["buy_imb_ma"] = df["taker_buy_imb"].rolling(12).mean()
+    signed_vol = df["taker_buy_imb"] * np.log(df["volume"] + 1)
+    df["cvd_z"] = _v2_causal_z(signed_vol.rolling(48).sum(), vol_window)
+    ema_f = c.ewm(span=12, adjust=False).mean()
+    ema_s = c.ewm(span=48, adjust=False).mean()
+    df["trend_mtf"] = (ema_f - ema_s) / (c + _V2_EPS) * 100
+    rng = (df["high"] - df["low"])
+    df["range_pos"] = ((c - df["low"]) / (rng + _V2_EPS)).clip(0, 1)
+    df["dist_hi20"] = (c - df["high"].rolling(20).max()) / (c + _V2_EPS) * 100
+    df["dist_lo20"] = (c - df["low"].rolling(20).min()) / (c + _V2_EPS) * 100
+    return df
+
+class _V2Attn(nn.Module):
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.attention = nn.Linear(hidden_dim, 1, bias=False)
+    def forward(self, lstm_out):
+        w = torch.softmax(self.attention(lstm_out), dim=1)
+        return torch.sum(w * lstm_out, dim=1)
+
+class LSTMDual(nn.Module):
+    def __init__(self, input_size, hidden_size=64, num_layers=2, dropout=0.2, n_classes=3):
+        super().__init__()
+        self.hidden_dim = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True,
+                            dropout=dropout if num_layers > 1 else 0.0)
+        self.attn = _V2Attn(hidden_size)
+        self.shared = nn.Sequential(nn.Linear(hidden_size, hidden_size // 2), nn.ReLU(), nn.Dropout(dropout))
+        self.reg_head = nn.Linear(hidden_size // 2, 1)
+        self.cls_head = nn.Linear(hidden_size // 2, n_classes)
+    def forward(self, x):
+        h0 = x.new_zeros(self.num_layers, x.size(0), self.hidden_dim)
+        c0 = x.new_zeros(self.num_layers, x.size(0), self.hidden_dim)
+        out, _ = self.lstm(x, (h0, c0))
+        z = self.shared(self.attn(out))
+        return self.reg_head(z).squeeze(-1), self.cls_head(z)
+
+class _V2GLU(nn.Module):
+    def __init__(self, size):
+        super().__init__()
+        self.fc = nn.Linear(size, size * 2)
+    def forward(self, x):
+        a, b = torch.chunk(self.fc(x), 2, dim=-1)
+        return a * torch.sigmoid(b)
+
+class _V2GRN(nn.Module):
+    def __init__(self, in_size, hidden, out_size=None, dropout=0.1):
+        super().__init__()
+        out_size = out_size or in_size
+        self.fc1 = nn.Linear(in_size, hidden)
+        self.fc2 = nn.Linear(hidden, out_size)
+        self.glu = _V2GLU(out_size)
+        self.ln = nn.LayerNorm(out_size)
+        self.drop = nn.Dropout(dropout)
+        self.skip = nn.Linear(in_size, out_size) if in_size != out_size else nn.Identity()
+    def forward(self, x):
+        res = self.skip(x)
+        x = self.fc2(torch.relu(self.fc1(x)))
+        return self.ln(res + self.glu(self.drop(x)))
+
+class _V2VSN(nn.Module):
+    def __init__(self, input_dim, num_vars, d_model, dropout=0.1):
+        super().__init__()
+        self.num_vars = num_vars
+        self.grns = nn.ModuleList([_V2GRN(input_dim // num_vars, d_model, d_model, dropout)
+                                   for _ in range(num_vars)])
+        self.selector = _V2GRN(input_dim, d_model, num_vars, dropout)
+    def forward(self, x):
+        w = torch.softmax(self.selector(x), dim=-1)
+        chunk = x.shape[-1] // self.num_vars
+        outs = [self.grns[i](x[..., i * chunk:(i + 1) * chunk]) for i in range(self.num_vars)]
+        outs = torch.stack(outs, dim=-1)
+        return torch.sum(outs * w.unsqueeze(-2), dim=-1)
+
+class _V2PosEnc(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        pos = torch.arange(0, max_len).unsqueeze(1).float()
+        div = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(pos * div)
+        pe[:, 1::2] = torch.cos(pos * div)
+        self.register_buffer("pe", pe.unsqueeze(0))
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1), :]
+
+class TFTDual(nn.Module):
+    def __init__(self, num_vars, d_model=32, nhead=4, num_layers=2, dropout=0.2, n_classes=3):
+        super().__init__()
+        self.vsn = _V2VSN(num_vars, num_vars, d_model, dropout)
+        self.pos = _V2PosEnc(d_model)
+        layer = nn.TransformerEncoderLayer(d_model, nhead, d_model * 4, dropout, batch_first=True)
+        self.encoder = nn.TransformerEncoder(layer, num_layers)
+        self.reg_head = nn.Linear(d_model, 1)
+        self.cls_head = nn.Linear(d_model, n_classes)
+    def forward(self, x):
+        z = self.encoder(self.pos(self.vsn(x)))[:, -1, :]
+        return self.reg_head(z).squeeze(-1), self.cls_head(z)
+
+def v2_load_model(model_type, symbol):
+    meta = json.load(open(os.path.join(V2_MODEL_DIR, f'meta_{model_type}_{symbol}.json')))
+    scaler = joblib.load(os.path.join(V2_MODEL_DIR, f'scaler_{model_type}_{symbol}.pkl'))
+    n_feat = len(meta['features'])
+    model = LSTMDual(n_feat) if model_type == 'lstm' else TFTDual(n_feat)
+    model.load_state_dict(torch.load(os.path.join(V2_MODEL_DIR, f'v2_{model_type}_{symbol}.pth'),
+                                     map_location=DEVICE))
+    model.to(DEVICE).eval()
+    return model, scaler, meta
+
+def v2_predict(df_raw, model, scaler, meta):
+    feats = meta['features']
+    seq = meta['seq_length']
+    df = compute_features_v2(df_raw).dropna()
+    if len(df) < seq:
+        return None
+    base_price = float(df['close'].iloc[-1])
+    window = scaler.transform(df[feats].tail(seq).values)
+    x = torch.tensor(window, dtype=torch.float32).unsqueeze(0).to(DEVICE)
+    with torch.no_grad():
+        pred_ret, logits = model(x)
+    pred_ret = float(pred_ret.item())
+    probs = torch.softmax(logits, -1).cpu().numpy().ravel()
+    cls = int(probs.argmax())
+    signal = {0: 'SHORT', 1: 'NEUTRAL', 2: 'LONG'}[cls]
+    pred_price = base_price * np.exp(pred_ret)
+    return {
+        "val": pred_ret, "price": float(pred_price),
+        "change_pct": (np.exp(pred_ret) - 1) * 100, "signal": signal,
+        "class_probs": {V2_CLASS_NAMES[i]: float(probs[i]) for i in range(len(V2_CLASS_NAMES))},
+        "horizon_min": meta['horizon'] * 5,
+    }
+
+
 # --- 3. Global State ---
 df_hist_dict = {}
 scalers_dict = {}
 models_lstm = {}
 models_tft = {}
-# Challenger (v2) models from the staged pipeline/ — return-based + direction
-# head. Optional: stays empty unless models_v2/ artifacts exist.
+# Challenger (v2) models loaded from models_v2/ (inlined defs above; no pipeline
+# package needed). Stays empty unless artifacts exist.
 models_v2_dict = {}
-v2_predict = None
 
 # Default features (9 features)
 LSTM_FEATURES = [
@@ -729,27 +938,24 @@ signal.signal(signal.SIGTERM, signal_handler)
 # --- 5. Main Loop ---
 
 def init_v2():
-    """Best-effort load of the staged challenger (v2) models from models_v2/.
-    Strictly optional: if the pipeline package or artifacts are absent, the live
-    engine runs exactly as before with only the legacy models. This lets the
-    dashboard show legacy vs. v2 side by side (champion/challenger)."""
-    global v2_predict
-    try:
-        if DRIVE_BASE_DIR not in sys.path:
-            sys.path.insert(0, DRIVE_BASE_DIR)
-        from pipeline.infer import load_model as _v2load, predict as _v2pred
-        v2_predict = _v2pred
-    except Exception as e:
-        print(f"[Init] v2 challenger pipeline not available ({e}). Running legacy-only.")
+    """Load the staged challenger (v2) models from models_v2/ using the inlined
+    defs above (no pipeline package needed on Drive). Strictly optional: if the
+    artifacts are absent, the engine runs exactly as before with only the legacy
+    models. This lets the dashboard show legacy vs. v2 (champion/challenger)."""
+    if not os.path.isdir(V2_MODEL_DIR):
+        print(f"[Init] No {V2_MODEL_DIR} directory; running legacy-only. "
+              "Train v2 on Colab (see pipeline/README.md) to enable the comparison.")
         return
+    print(f"[Init] Loading v2 challenger models from {V2_MODEL_DIR} ({V2_HORIZON_MIN}min horizon).")
     for symbol, _ in COINS:
         entry = {}
         for mt in ('lstm', 'tft'):
+            ckpt = os.path.join(V2_MODEL_DIR, f'v2_{mt}_{symbol}.pth')
+            if not os.path.exists(ckpt):
+                continue
             try:
-                entry[mt] = _v2load(mt, symbol)
+                entry[mt] = v2_load_model(mt, symbol)
                 print(f"   -> v2 {mt.upper()} model for {symbol} loaded.")
-            except FileNotFoundError:
-                pass
             except Exception as e:
                 print(f"   -> v2 {mt} load failed for {symbol}: {e}")
         if entry:
@@ -898,7 +1104,7 @@ def run_inference(symbol, db_id):
     # and fully guarded so any v2 error never blocks the legacy push. Deliberately
     # computed AFTER the Ensemble above so the champion ensemble is unchanged.
     v2_hist_entries = {}
-    if v2_predict is not None and symbol in models_v2_dict:
+    if symbol in models_v2_dict:
         for mt, name in (('lstm', 'LSTM_v2'), ('tft', 'Transformer_v2')):
             entry = models_v2_dict[symbol].get(mt)
             if not entry:
@@ -910,7 +1116,8 @@ def run_inference(symbol, db_id):
                     continue
                 results["predictions"][name] = {
                     "val": out["val"], "price": out["price"],
-                    "change_pct": out["change_pct"], "signal": out["signal"]
+                    "change_pct": out["change_pct"], "signal": out["signal"],
+                    "horizon_min": out["horizon_min"],   # 60 -> frontend can label it correctly
                 }
                 # Only score in history when v2 forecasts the same 5-min horizon
                 # the dashboard matures against (avoids mis-scoring longer horizons).

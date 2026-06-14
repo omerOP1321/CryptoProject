@@ -22,17 +22,19 @@ from .models import LSTMDual, TFTDual
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def load_model(model_type: str, symbol: str):
+def load_model(model_type: str, symbol: str, horizon_min: int = 60):
+    """Load a staged v2 model from its per-horizon folder (models_v2/{N}min/)."""
     tag = f"{model_type}_{symbol}"
-    meta = json.load(open(os.path.join(OUT_DIR, f"meta_{tag}.json")))
+    mdir = os.path.join(OUT_DIR, f"{horizon_min}min")
+    meta = json.load(open(os.path.join(mdir, f"meta_{tag}.json")))
     import joblib
-    scaler = joblib.load(os.path.join(OUT_DIR, f"scaler_{tag}.pkl"))
+    scaler = joblib.load(os.path.join(mdir, f"scaler_{tag}.pkl"))
     n_feat = len(meta["features"])
     if model_type == "lstm":
         model = LSTMDual(n_feat)
     else:
         model = TFTDual(n_feat)
-    model.load_state_dict(torch.load(os.path.join(OUT_DIR, f"v2_{tag}.pth"), map_location=DEVICE))
+    model.load_state_dict(torch.load(os.path.join(mdir, f"v2_{tag}.pth"), map_location=DEVICE))
     model.to(DEVICE).eval()
     return model, scaler, meta
 
