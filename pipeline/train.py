@@ -305,22 +305,23 @@ def run(model_type, symbol, cfg):
                     {"dir": pooled_dir, "p": pooled_p, "trades": tot_trades,
                      "err": mean_err, "persist": mean_persist, "net": mean_net, "edge": beats})
 
-    # save the most-recent-fold model as the staged candidate
-    os.makedirs(OUT_DIR, exist_ok=True)
+    # save the most-recent-fold model into a per-horizon folder (e.g. models_v2/60min/)
+    mdir = os.path.join(OUT_DIR, f"{cfg['horizon']*5}min")
+    os.makedirs(mdir, exist_ok=True)
     model, fold = last_fold
     import joblib
     tag = f"{model_type}_{symbol}"
-    torch.save(model.state_dict(), os.path.join(OUT_DIR, f"v2_{tag}.pth"))
-    joblib.dump(fold["scaler"], os.path.join(OUT_DIR, f"scaler_{tag}.pkl"))
+    torch.save(model.state_dict(), os.path.join(mdir, f"v2_{tag}.pth"))
+    joblib.dump(fold["scaler"], os.path.join(mdir, f"scaler_{tag}.pkl"))
     meta = {"symbol": symbol, "model_type": model_type, "features": feats,
             "horizon": cfg["horizon"], "seq_length": cfg["seq_length"],
             "deadband_k": cfg["deadband_k"], "class_names": CLASS_NAMES,
             "use_extra_features": bool(cfg.get("use_extra_features")),
             "pooled_dir": pooled_dir, "pooled_p": pooled_p,
             "mean_err": mean_err, "mean_persist_err": mean_persist}
-    with open(os.path.join(OUT_DIR, f"meta_{tag}.json"), "w") as f:
+    with open(os.path.join(mdir, f"meta_{tag}.json"), "w") as f:
         json.dump(meta, f, indent=2)
-    print(f"  saved -> models_v2/v2_{tag}.pth (+ scaler, meta)")
+    print(f"  saved -> models_v2/{cfg['horizon']*5}min/v2_{tag}.pth (+ scaler, meta)")
     return meta
 
 

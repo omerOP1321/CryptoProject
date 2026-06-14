@@ -268,6 +268,10 @@ class TFTModel(nn.Module):
 # ONLY the trained artifacts in models_v2/ on Drive — no pipeline/ code folder.
 # Keep these defs in sync with pipeline/{features,models,infer}.py.
 V2_DIR = os.path.join(DRIVE_BASE_DIR, 'models_v2')
+# v2 models are now organized per prediction-horizon (models_v2/{N}min/). Point the
+# live engine at the deployed horizon; bump this to switch which horizon goes live.
+V2_HORIZON_MIN = 60
+V2_MODEL_DIR = os.path.join(V2_DIR, f'{V2_HORIZON_MIN}min')
 V2_VOL_WINDOW = 288
 V2_CLASS_NAMES = ["DOWN", "FLAT", "UP"]
 V2_FEATURES = [
@@ -435,11 +439,11 @@ class TFTDual(nn.Module):
         return self.reg_head(z).squeeze(-1), self.cls_head(z)
 
 def v2_load_model(model_type, symbol):
-    meta = json.load(open(os.path.join(V2_DIR, f'meta_{model_type}_{symbol}.json')))
-    scaler = joblib.load(os.path.join(V2_DIR, f'scaler_{model_type}_{symbol}.pkl'))
+    meta = json.load(open(os.path.join(V2_MODEL_DIR, f'meta_{model_type}_{symbol}.json')))
+    scaler = joblib.load(os.path.join(V2_MODEL_DIR, f'scaler_{model_type}_{symbol}.pkl'))
     n_feat = len(meta['features'])
     model = LSTMDual(n_feat) if model_type == 'lstm' else TFTDual(n_feat)
-    model.load_state_dict(torch.load(os.path.join(V2_DIR, f'v2_{model_type}_{symbol}.pth'),
+    model.load_state_dict(torch.load(os.path.join(V2_MODEL_DIR, f'v2_{model_type}_{symbol}.pth'),
                                      map_location=DEVICE))
     model.to(DEVICE).eval()
     return model, scaler, meta
@@ -938,14 +942,15 @@ def init_v2():
     defs above (no pipeline package needed on Drive). Strictly optional: if the
     artifacts are absent, the engine runs exactly as before with only the legacy
     models. This lets the dashboard show legacy vs. v2 (champion/challenger)."""
-    if not os.path.isdir(V2_DIR):
-        print(f"[Init] No {V2_DIR} directory; running legacy-only. "
+    if not os.path.isdir(V2_MODEL_DIR):
+        print(f"[Init] No {V2_MODEL_DIR} directory; running legacy-only. "
               "Train v2 on Colab (see pipeline/README.md) to enable the comparison.")
         return
+    print(f"[Init] Loading v2 challenger models from {V2_MODEL_DIR} ({V2_HORIZON_MIN}min horizon).")
     for symbol, _ in COINS:
         entry = {}
         for mt in ('lstm', 'tft'):
-            ckpt = os.path.join(V2_DIR, f'v2_{mt}_{symbol}.pth')
+            ckpt = os.path.join(V2_MODEL_DIR, f'v2_{mt}_{symbol}.pth')
             if not os.path.exists(ckpt):
                 continue
             try:
@@ -1111,7 +1116,8 @@ def run_inference(symbol, db_id):
                     continue
                 results["predictions"][name] = {
                     "val": out["val"], "price": out["price"],
-                    "change_pct": out["change_pct"], "signal": out["signal"]
+                    "change_pct": out["change_pct"], "signal": out["signal"],
+                    "horizon_min": out["horizon_min"],   # 60 -> frontend can label it correctly
                 }
                 # Only score in history when v2 forecasts the same 5-min horizon
                 # the dashboard matures against (avoids mis-scoring longer horizons).

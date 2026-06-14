@@ -90,8 +90,9 @@ def save_selection(selected: dict, ranks: dict, cfg: dict,
     """Persist the Boruta result (chosen features + hit-rates + the candidate pool
     it chose from) to models_v2/selected_features.json so it survives restarts and
     is a citable artifact. Returns the path written."""
-    path = path or os.path.join(OUT_DIR, "selected_features.json")
-    os.makedirs(OUT_DIR, exist_ok=True)
+    mdir = os.path.join(OUT_DIR, f"{cfg.get('horizon', 1) * 5}min")
+    path = path or os.path.join(mdir, "selected_features.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     pool = feature_list({**cfg, "selected_features": None})
     payload = {
         "candidate_pool": pool,
@@ -113,8 +114,9 @@ def update_selection(symbol: str, confirmed, rank: pd.DataFrame, cfg: dict,
     """Merge ONE symbol's Boruta result into models_v2/selected_features.json
     (load → update this symbol → write back). Used by the automatic in-run
     selection so each per-symbol run keeps the shared file up to date."""
-    path = path or os.path.join(OUT_DIR, "selected_features.json")
-    os.makedirs(OUT_DIR, exist_ok=True)
+    mdir = os.path.join(OUT_DIR, f"{cfg.get('horizon', 1) * 5}min")
+    path = path or os.path.join(mdir, "selected_features.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     payload = {}
     if os.path.exists(path):
         try:
