@@ -272,11 +272,6 @@ V2_DIR = os.path.join(DRIVE_BASE_DIR, 'models_v2')
 # live engine at the deployed horizon; bump this to switch which horizon goes live.
 V2_HORIZON_MIN = 60
 V2_MODEL_DIR = os.path.join(V2_DIR, f'{V2_HORIZON_MIN}min')
-# Backward-compat: if the per-horizon folder is absent (models trained before the
-# per-horizon reorg), fall back to the models_v2/ root so v2 still loads.
-if not os.path.isdir(V2_MODEL_DIR) and os.path.isdir(V2_DIR):
-    print(f"[v2] {V2_MODEL_DIR} not found; falling back to {V2_DIR} (root).")
-    V2_MODEL_DIR = V2_DIR
 V2_VOL_WINDOW = 288
 V2_CLASS_NAMES = ["DOWN", "FLAT", "UP"]
 V2_FEATURES = [
@@ -586,6 +581,49 @@ def download_file_from_drive(service, filename, local_dest_path):
         print(f"   -> ❌ Failed to download '{filename}' from Drive: {e}")
         return False
 
+def download_drive_folder(service, folder_path_parts, local_dir):
+    """Download EVERY file inside a nested Drive folder (e.g. ['models_v2','60min'])
+    into local_dir. Folder-scoped on purpose: v2 artifacts like scaler_lstm_BTCUSDT.pkl
+    share a filename with the legacy scalers, so a by-name fetch would grab the wrong
+    one. Resolving the folder path to an ID and listing its children avoids the clash."""
+    if service is None:
+        return 0
+    try:
+        parent_id = None
+        for part in folder_path_parts:
+            q = (f"name = '{part}' and mimeType = 'application/vnd.google-apps.folder' "
+                 f"and trashed = false")
+            if parent_id:
+                q += f" and '{parent_id}' in parents"
+            items = service.files().list(q=q, spaces='drive',
+                                         fields='files(id, name)').execute().get('files', [])
+            if not items:
+                print(f"   -> v2: Drive folder '{'/'.join(folder_path_parts)}' not found "
+                      f"(missing '{part}'). Train + save it on Colab first.")
+                return 0
+            parent_id = items[0]['id']
+        files = service.files().list(q=f"'{parent_id}' in parents and trashed = false",
+                                     spaces='drive', fields='files(id, name)',
+                                     pageSize=1000).execute().get('files', [])
+        os.makedirs(local_dir, exist_ok=True)
+        n = 0
+        for f in files:
+            request = service.files().get_media(fileId=f['id'])
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            with open(os.path.join(local_dir, f['name']), 'wb') as out:
+                out.write(fh.getvalue())
+            n += 1
+        print(f"   -> v2: downloaded {n} files from Drive '{'/'.join(folder_path_parts)}' -> {local_dir}")
+        return n
+    except Exception as e:
+        print(f"   -> ❌ v2 Drive folder download failed: {e}")
+        return 0
+
+
 def fetch_missing_history(symbol, start_time_dt):
     print(f"   -> Gap detected. Fetching missing historical candles since {start_time_dt}...")
     start_ms = int(start_time_dt.timestamp() * 1000)
@@ -771,6 +809,15 @@ def initialize():
                     if not os.path.exists(local_csv_path):
                         print(f"   -> Local historical data for {symbol} not found. Downloading from Google Drive...")
                         download_file_from_drive(service, csv_file, local_csv_path)
+
+                # 3. Download the v2 challenger models (whole models_v2/{N}min folder),
+                #    just like the legacy fetch above. Folder-scoped to dodge the
+                #    scaler_*.pkl filename clash. Skipped if all 6 are already local.
+                have_v2 = os.path.isdir(V2_MODEL_DIR) and all(
+                    os.path.exists(os.path.join(V2_MODEL_DIR, f'v2_{mt}_{sym}.pth'))
+                    for sym, _ in COINS for mt in ('lstm', 'tft'))
+                if not have_v2:
+                    download_drive_folder(service, ['models_v2', f'{V2_HORIZON_MIN}min'], V2_MODEL_DIR)
             else:
                 print("   -> ⚠️ Google Drive API service could not be initialized.")
         else:
@@ -947,6 +994,13 @@ def init_v2():
     defs above (no pipeline package needed on Drive). Strictly optional: if the
     artifacts are absent, the engine runs exactly as before with only the legacy
     models. This lets the dashboard show legacy vs. v2 (champion/challenger)."""
+    global V2_MODEL_DIR
+    def _has_pth(d):
+        return os.path.isdir(d) and any(x.endswith('.pth') for x in os.listdir(d))
+    # Backward-compat: per-horizon dir empty but root has models (pre-reorg layout).
+    if not _has_pth(V2_MODEL_DIR) and _has_pth(V2_DIR):
+        print(f"[Init] v2: {V2_MODEL_DIR} empty; falling back to {V2_DIR} (root).")
+        V2_MODEL_DIR = V2_DIR
     if not os.path.isdir(V2_MODEL_DIR):
         print(f"[Init] No {V2_MODEL_DIR} directory; running legacy-only. "
               "Train v2 on Colab (see pipeline/README.md) to enable the comparison.")
