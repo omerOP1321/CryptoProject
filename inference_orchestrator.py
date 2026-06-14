@@ -272,6 +272,11 @@ V2_DIR = os.path.join(DRIVE_BASE_DIR, 'models_v2')
 # live engine at the deployed horizon; bump this to switch which horizon goes live.
 V2_HORIZON_MIN = 60
 V2_MODEL_DIR = os.path.join(V2_DIR, f'{V2_HORIZON_MIN}min')
+# Backward-compat: if the per-horizon folder is absent (models trained before the
+# per-horizon reorg), fall back to the models_v2/ root so v2 still loads.
+if not os.path.isdir(V2_MODEL_DIR) and os.path.isdir(V2_DIR):
+    print(f"[v2] {V2_MODEL_DIR} not found; falling back to {V2_DIR} (root).")
+    V2_MODEL_DIR = V2_DIR
 V2_VOL_WINDOW = 288
 V2_CLASS_NAMES = ["DOWN", "FLAT", "UP"]
 V2_FEATURES = [
@@ -946,7 +951,9 @@ def init_v2():
         print(f"[Init] No {V2_MODEL_DIR} directory; running legacy-only. "
               "Train v2 on Colab (see pipeline/README.md) to enable the comparison.")
         return
+    _pths = sorted(f for f in os.listdir(V2_MODEL_DIR) if f.endswith('.pth'))
     print(f"[Init] Loading v2 challenger models from {V2_MODEL_DIR} ({V2_HORIZON_MIN}min horizon).")
+    print(f"[Init] .pth files present: {_pths or 'NONE — did training save here?'}")
     for symbol, _ in COINS:
         entry = {}
         for mt in ('lstm', 'tft'):
