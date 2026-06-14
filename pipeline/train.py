@@ -229,7 +229,29 @@ def _count(path):
         return "?"
 
 
+_SELECTION_CACHE = {}
+
+
+def _auto_select(symbol, cfg):
+    """Boruta feature selection run automatically inside run(). Cached per
+    (symbol, candidate-pool, horizon) so the second model on a coin reuses the
+    first model's selection instead of re-fitting. Persists to Drive."""
+    from pipeline.feature_select import select_for_symbol, update_selection
+    pool = tuple(feature_list({**cfg, "selected_features": None}))
+    key = (symbol, pool, cfg.get("horizon"))
+    if key not in _SELECTION_CACHE:
+        confirmed, rank = select_for_symbol(symbol, cfg)
+        update_selection(symbol, confirmed, rank, cfg)
+        print(f"  [auto-select] {symbol}: Boruta kept {len(confirmed)}/{len(pool)} "
+              f"-> {confirmed}")
+        _SELECTION_CACHE[key] = confirmed
+    return _SELECTION_CACHE[key]
+
+
 def run(model_type, symbol, cfg):
+    cfg = dict(cfg)  # never mutate the caller's config (selection is per-symbol)
+    if cfg.get("auto_select") and not cfg.get("selected_features"):
+        cfg["selected_features"] = _auto_select(symbol, cfg)
     feats = feature_list(cfg)
     print(f"\n{'='*70}\n{symbol}  {model_type.upper()}  "
           f"(horizon={cfg['horizon']*5}m, seq={cfg['seq_length']}, "

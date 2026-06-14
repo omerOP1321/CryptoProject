@@ -34,9 +34,11 @@ API = "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
 # Binance trading pair -> CoinMetrics asset code.
 ASSET = {"BTCUSDT": "btc", "ETHUSDT": "eth", "XRPUSDT": "xrp"}
 
-# Daily community-tier metrics that exist for all three assets. NVT is derived
-# later as CapMrktCurUSD / TxTfrValAdjUSD (a classic on-chain valuation signal).
-METRICS = ["AdrActCnt", "TxCnt", "TxTfrValAdjUSD", "CapMrktCurUSD"]
+# Daily FREE community-tier metrics (verified available for btc/eth/xrp).
+# NVT is derived later as CapMrktCurUSD / TxTfrCnt (market cap per on-chain
+# transfer) — a free proxy for the classic NVT (the USD-transfer-value metric
+# TxTfrValAdjUSD is paid-tier only, returns HTTP 403 on the community API).
+METRICS = ["AdrActCnt", "TxCnt", "TxTfrCnt", "CapMrktCurUSD"]
 
 START = "2017-01-01"
 

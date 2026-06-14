@@ -118,7 +118,7 @@ def _onchain_daily_features(oc: pd.DataFrame) -> pd.DataFrame:
     oc = oc.copy()
     oc["date"] = pd.to_datetime(oc["date"])
     oc = oc.sort_values("date").drop_duplicates("date").reset_index(drop=True)
-    for col in ("AdrActCnt", "TxCnt", "TxTfrValAdjUSD", "CapMrktCurUSD"):
+    for col in ("AdrActCnt", "TxCnt", "TxTfrCnt", "CapMrktCurUSD"):
         oc[col] = pd.to_numeric(oc.get(col), errors="coerce")
 
     def cz(series, window=90):
@@ -130,7 +130,9 @@ def _onchain_daily_features(oc: pd.DataFrame) -> pd.DataFrame:
     oc["onch_adr_z"] = cz(log_adr)
     oc["onch_adr_chg"] = log_adr.diff(7)
     oc["onch_tx_z"] = cz(np.log(oc["TxCnt"] + 1))
-    nvt = oc["CapMrktCurUSD"] / (oc["TxTfrValAdjUSD"] + EPS)
+    # NVT proxy: market cap per on-chain transfer (free-tier substitute for the
+    # paid USD-transfer-value metric). High => price rich vs. network throughput.
+    nvt = oc["CapMrktCurUSD"] / (oc["TxTfrCnt"] + EPS)
     oc["onch_nvt_z"] = cz(np.log(nvt.clip(lower=EPS)))
     return oc[["date"] + FEATURES_ONCHAIN]
 

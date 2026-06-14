@@ -57,6 +57,7 @@ CONFIG = {
     # --- feature set ---
     "use_extra_features": False,  # True => add the FEATURES_EXTRA block (volatility / order-flow / MTF)
     "use_onchain": False,         # True => add FEATURES_ONCHAIN (daily on-chain, leakage-safe +1d shift)
+    "auto_select": False,         # True => Boruta feature selection runs INSIDE run() (train region only)
     # --- smoke test (tiny run on local cached CSV to prove the code executes) ---
     "smoke": False,
 }
@@ -103,8 +104,12 @@ FEATURES_ONCHAIN = [
 FEATURES = FEATURES_BASE
 
 def feature_list(cfg):
-    """The feature columns a run uses, per cfg['use_extra_features'] /
-    cfg['use_onchain']. On-chain features append after the base/extra block."""
+    """The feature columns a run uses. If cfg['selected_features'] is set (by the
+    Boruta feature-selection stage), that explicit subset wins. Otherwise the set
+    is built from the base block + cfg['use_extra_features'] + cfg['use_onchain'].
+    """
+    if cfg.get("selected_features"):
+        return list(cfg["selected_features"])
     feats = list(FEATURES_BASE)
     if cfg.get("use_extra_features"):
         feats += FEATURES_EXTRA
