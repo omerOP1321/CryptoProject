@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from .config import CONFIG, DATA_DIR, feature_list
-from .features import compute_features, make_targets
+from .features import compute_features, make_targets, merge_onchain
 
 
 def load_frame(symbol: str, cfg: dict) -> pd.DataFrame:
@@ -21,6 +21,8 @@ def load_frame(symbol: str, cfg: dict) -> pd.DataFrame:
     path = os.path.join(DATA_DIR, f"{symbol}_5m_data.csv")
     df = pd.read_csv(path)
     df = compute_features(df, vol_window=cfg["vol_window"])
+    if cfg.get("use_onchain"):
+        df = merge_onchain(df, symbol)
     df = make_targets(df, cfg["horizon"], cfg["deadband_k"], cfg["vol_window"])
     keep = feats + ["target_ret", "target_cls", "close", "open_time",
                     "bb_lband", "bb_hband"]

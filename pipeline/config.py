@@ -56,6 +56,7 @@ CONFIG = {
     "pred_batch": 4096,    # batch size for inference (fixes the seq_length=120 OOM)
     # --- feature set ---
     "use_extra_features": False,  # True => add the FEATURES_EXTRA block (volatility / order-flow / MTF)
+    "use_onchain": False,         # True => add FEATURES_ONCHAIN (daily on-chain, leakage-safe +1d shift)
     # --- smoke test (tiny run on local cached CSV to prove the code executes) ---
     "smoke": False,
 }
@@ -86,11 +87,29 @@ FEATURES_EXTRA = [
     "dist_lo20",   # distance to 20-bar low
 ]
 
+# Optional on-chain block (enabled via cfg['use_onchain']). Daily blockchain
+# metrics from CoinMetrics (see fetch_onchain.py), aligned to the 5m grid with a
+# +1-day shift so a day's metric is only used AFTER it closes (no look-ahead).
+# This is the only input family carrying signal INDEPENDENT of price/technicals,
+# hence the last untried lever after the horizon/coin/feature grid stalled at ~52%.
+FEATURES_ONCHAIN = [
+    "onch_adr_z",    # causal z-score (90d) of log(active addresses)
+    "onch_adr_chg",  # 7-day log-change of active addresses (network growth)
+    "onch_tx_z",     # causal z-score (90d) of log(transaction count)
+    "onch_nvt_z",    # causal z-score (90d) of NVT = market_cap / transfer_value
+]
+
 # Backward-compatible default (the base set).
 FEATURES = FEATURES_BASE
 
 def feature_list(cfg):
-    """The feature columns a run uses, per cfg['use_extra_features']."""
-    return FEATURES_BASE + FEATURES_EXTRA if cfg.get("use_extra_features") else FEATURES_BASE
+    """The feature columns a run uses, per cfg['use_extra_features'] /
+    cfg['use_onchain']. On-chain features append after the base/extra block."""
+    feats = list(FEATURES_BASE)
+    if cfg.get("use_extra_features"):
+        feats += FEATURES_EXTRA
+    if cfg.get("use_onchain"):
+        feats += FEATURES_ONCHAIN
+    return feats
 
 CLASS_NAMES = ["DOWN", "FLAT", "UP"]  # indices 0,1,2

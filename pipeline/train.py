@@ -40,6 +40,11 @@ except Exception:
     def _binom_p(k, n):
         return float("nan")
 
+try:
+    from tqdm.auto import tqdm          # live progress bar (Colab/Jupyter friendly)
+except Exception:
+    tqdm = None
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -57,7 +62,7 @@ def _loader(arrs, bs, shuffle):
     return torch.utils.data.DataLoader(ds, batch_size=bs, shuffle=shuffle)
 
 
-def _train_one_fold(model, fold, cfg):
+def _train_one_fold(model, fold, cfg, label=""):
     huber = nn.HuberLoss(delta=1.0)
     ce = nn.CrossEntropyLoss()
     w = cfg["cls_loss_weight"]
@@ -67,15 +72,23 @@ def _train_one_fold(model, fold, cfg):
     tr = _loader(fold["train"], cfg["batch_size"], True)
     va = _loader(fold["val"], cfg["batch_size"], False)
     best, best_state, bad = np.inf, None, 0
+    epochs, patience = cfg["epochs"], cfg["patience"]
 
-    for epoch in range(cfg["epochs"]):
-        model.train()
-        for X, yr, yc in tr:
+    for epoch in range(epochs):
+        model.train(); tloss = 0.0; ntb = 0
+        # live batch progress bar (disappears after each epoch; falls back to a
+        # plain loop if tqdm isn't available)
+        it = tqdm(tr, desc=f"{label} ep{epoch+1}/{epochs}", leave=False, unit="b") if tqdm else tr
+        for X, yr, yc in it:
             X, yr, yc = X.to(DEVICE), yr.to(DEVICE), yc.to(DEVICE)
             opt.zero_grad()
             pr, pc = model(X)
             loss = huber(pr, yr) + w * ce(pc, yc)
             loss.backward(); opt.step()
+            tloss += loss.item(); ntb += 1
+            if tqdm:
+                it.set_postfix(loss=f"{loss.item():.4f}")
+        tloss /= max(ntb, 1)
         # validation
         model.eval(); vloss = 0.0; nb = 0
         with torch.no_grad():
@@ -85,12 +98,16 @@ def _train_one_fold(model, fold, cfg):
                 vloss += (huber(pr, yr) + w * ce(pc, yc)).item(); nb += 1
         vloss = vloss / max(nb, 1)
         sched.step(vloss)
-        if vloss < best - 1e-7:
+        improved = vloss < best - 1e-7
+        if improved:
             best, best_state, bad = vloss, {k: v.cpu().clone() for k, v in model.state_dict().items()}, 0
         else:
             bad += 1
-            if bad >= cfg["patience"]:
-                break
+        print(f"      ep {epoch+1:>2}/{epochs}  train {tloss:.5f}  val {vloss:.5f}  "
+              f"best {best:.5f}  patience {bad}/{patience}{'  *new best' if improved else ''}")
+        if bad >= patience:
+            print(f"      early stop (no val improvement for {patience} epochs)")
+            break
     if best_state:
         model.load_state_dict(best_state)
     return model, best
@@ -230,7 +247,8 @@ def run(model_type, symbol, cfg):
         if len(fold["train"][0]) < 20 or len(fold["test"][0]) < 5:
             continue
         model = _make_model(model_type, len(feats), cfg).to(DEVICE)
-        model, vloss = _train_one_fold(model, fold, cfg)
+        model, vloss = _train_one_fold(model, fold, cfg,
+                                       label=f"{symbol} {model_type} f{fold['fold']}")
         pr, pc = _predict(model, fold["test"], batch_size=pred_batch)
         res = _evaluate(pr, pc, fold["test"])
         res["fold"] = fold["fold"]; res["val_loss"] = vloss
