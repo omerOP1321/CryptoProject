@@ -27,3 +27,5 @@ token.json
 #Ignor plans and reports
 audit_report.md
 model_audit.md
+.DS_Store
+**/.DS_Store
