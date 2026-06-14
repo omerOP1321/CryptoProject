@@ -2,6 +2,7 @@
 data/
 processed_data/
 models/
+models_v2/
 
 # Ignore python cache
 __pycache__/

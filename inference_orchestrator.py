@@ -1032,11 +1032,13 @@ def run_inference(symbol, db_id):
 
     # Fetch existing prediction history from Supabase to append to it
     existing_history = []
+    existing_history_v2 = []
     if supabase:
         try:
             res = supabase.table('predictions').select('payload').eq('id', db_id).execute()
             if res.data and res.data[0].get('payload'):
                 existing_history = res.data[0]['payload'].get('prediction_history', [])
+                existing_history_v2 = res.data[0]['payload'].get('prediction_history_v2', [])
         except Exception as e:
             print(f"   -> Failed to fetch existing prediction history: {e}")
 
@@ -1063,7 +1065,8 @@ def run_inference(symbol, db_id):
         "timestamp": str(df_features['open_time'].iloc[-1]),
         "last_price": last_price,
         "predictions": {},
-        "prediction_history": existing_history
+        "prediction_history": existing_history,
+        "prediction_history_v2": existing_history_v2,
     }
 
     l_band = df_features['bb_lband'].iloc[-1]
@@ -1164,7 +1167,9 @@ def run_inference(symbol, db_id):
     # 7b. Challenger v2 predictions (return-based price + direction head). Additive
     # and fully guarded so any v2 error never blocks the legacy push. Deliberately
     # computed AFTER the Ensemble above so the champion ensemble is unchanged.
-    v2_hist_entries = {}
+    v2_hist_entries = {}      # 5-min-horizon v2 -> shares the legacy history
+    v2_60m_entries = {}       # longer-horizon v2 -> its own history series
+    v2_offset_sec = V2_HORIZON_MIN * 60
     if symbol in models_v2_dict:
         for mt, name in (('lstm', 'LSTM_v2'), ('tft', 'Transformer_v2')):
             entry = models_v2_dict[symbol].get(mt)
@@ -1180,10 +1185,14 @@ def run_inference(symbol, db_id):
                     "change_pct": out["change_pct"], "signal": out["signal"],
                     "horizon_min": out["horizon_min"],   # 60 -> frontend can label it correctly
                 }
-                # Only score in history when v2 forecasts the same 5-min horizon
-                # the dashboard matures against (avoids mis-scoring longer horizons).
+                # Route each v2 prediction to the history scored at its OWN horizon:
+                # 5-min models join the legacy series; longer (e.g. 60-min) models go to
+                # prediction_history_v2 with target_time = now + horizon (scored that far ahead).
                 if meta.get("horizon") == 1:
                     v2_hist_entries[name] = out["price"]
+                else:
+                    v2_60m_entries[name] = out["price"]
+                    v2_offset_sec = int(meta.get("horizon", 12)) * 5 * 60
             except Exception as e:
                 print(f"   -> v2 {name} inference failed: {e}")
 
@@ -1228,6 +1237,34 @@ def run_inference(symbol, db_id):
         results["prediction_history"] = cleaned_history
     except Exception as e:
         print(f"   -> Failed to update prediction history: {e}")
+
+    # 7c. v2 longer-horizon prediction history. Identical mechanics to the legacy
+    # block above, but target_time = now + the v2 horizon (e.g. +60 min), so each
+    # forecast is scored against the actual price that many minutes later. Kept in a
+    # separate series (prediction_history_v2) so the 5-min and 60-min tracks never mix.
+    try:
+        if v2_60m_entries:
+            last_time_dt = df_features['open_time'].iloc[-1]
+            target_time_v2 = int(last_time_dt.timestamp() + v2_offset_sec)
+            new_v2 = {"time": target_time_v2}
+            new_v2.update(v2_60m_entries)
+
+            hist_v2 = results.get("prediction_history_v2", [])
+            df_v2 = pd.DataFrame(hist_v2)
+            if not df_v2.empty:
+                df_v2 = pd.concat([df_v2, pd.DataFrame([new_v2])])
+            else:
+                df_v2 = pd.DataFrame([new_v2])
+            df_v2 = df_v2.drop_duplicates(subset=['time'], keep='last').sort_values('time')
+            cutoff = int(datetime.now().timestamp()) - 7 * 24 * 3600
+            df_v2 = df_v2[df_v2['time'] >= cutoff]
+            cleaned_v2 = []
+            for entry in df_v2.tail(500).to_dict('records'):
+                cleaned_v2.append({k: (None if isinstance(v, float) and math.isnan(v) else v)
+                                   for k, v in entry.items()})
+            results["prediction_history_v2"] = cleaned_v2
+    except Exception as e:
+        print(f"   -> Failed to update v2 prediction history: {e}")
 
     # 8. Add History Aggregation (OHLC format for Candlestick charts with UNIX timestamp in seconds)
     try:
