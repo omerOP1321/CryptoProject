@@ -1169,15 +1169,27 @@ def run_inference(symbol, db_id):
     # computed AFTER the Ensemble above so the champion ensemble is unchanged.
     v2_hist_entries = {}      # 5-min-horizon v2 -> shares the legacy history
     v2_60m_entries = {}       # longer-horizon v2 -> its own history series
-    v2_offset_sec = V2_HORIZON_MIN * 60
+    v2_target_time = None     # hour-aligned target timestamp for the v2 series
     if symbol in models_v2_dict:
+        # Anchor longer-horizon (e.g. 60-min) forecasts to the CLOCK-HOUR grid: base the
+        # prediction on the candle at the most recent hour boundary and forecast the NEXT
+        # hour boundary. So a run started at 06:23 still forecasts 06:00 -> 07:00, and every
+        # 5-min cycle within that hour reproduces the same point (deduped by target time).
+        last_time_dt = pd.Timestamp(df_hist['open_time'].iloc[-1])
+        hour_anchor = last_time_dt.floor('h')
+        df_anchor = df_hist[df_hist['open_time'] <= hour_anchor]
         for mt, name in (('lstm', 'LSTM_v2'), ('tft', 'Transformer_v2')):
             entry = models_v2_dict[symbol].get(mt)
             if not entry:
                 continue
             try:
                 mdl, scaler, meta = entry
-                out = v2_predict(df_hist.tail(2000), mdl, scaler, meta)
+                # 5-min models forecast from the latest candle; longer-horizon models
+                # forecast from the hour anchor.
+                src = df_hist if meta.get("horizon") == 1 else df_anchor
+                if len(src) < 50:
+                    continue
+                out = v2_predict(src.tail(2000), mdl, scaler, meta)
                 if not out:
                     continue
                 results["predictions"][name] = {
@@ -1185,14 +1197,13 @@ def run_inference(symbol, db_id):
                     "change_pct": out["change_pct"], "signal": out["signal"],
                     "horizon_min": out["horizon_min"],   # 60 -> frontend can label it correctly
                 }
-                # Route each v2 prediction to the history scored at its OWN horizon:
-                # 5-min models join the legacy series; longer (e.g. 60-min) models go to
-                # prediction_history_v2 with target_time = now + horizon (scored that far ahead).
+                # 5-min models join the legacy series; longer-horizon models go to
+                # prediction_history_v2 at the next hour boundary (hour_anchor + horizon).
                 if meta.get("horizon") == 1:
                     v2_hist_entries[name] = out["price"]
                 else:
                     v2_60m_entries[name] = out["price"]
-                    v2_offset_sec = int(meta.get("horizon", 12)) * 5 * 60
+                    v2_target_time = int(hour_anchor.timestamp()) + int(meta.get("horizon", 12)) * 5 * 60
             except Exception as e:
                 print(f"   -> v2 {name} inference failed: {e}")
 
@@ -1243,10 +1254,8 @@ def run_inference(symbol, db_id):
     # forecast is scored against the actual price that many minutes later. Kept in a
     # separate series (prediction_history_v2) so the 5-min and 60-min tracks never mix.
     try:
-        if v2_60m_entries:
-            last_time_dt = df_features['open_time'].iloc[-1]
-            target_time_v2 = int(last_time_dt.timestamp() + v2_offset_sec)
-            new_v2 = {"time": target_time_v2}
+        if v2_60m_entries and v2_target_time:
+            new_v2 = {"time": v2_target_time}
             new_v2.update(v2_60m_entries)
 
             hist_v2 = results.get("prediction_history_v2", [])
