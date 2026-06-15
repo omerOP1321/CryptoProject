@@ -433,7 +433,7 @@
         </div>
 
         <div class="footer">
-            <span>Updating every 30 seconds. All model targets predict 5 minutes ahead (1 candle of 5m). Hover on chart for OHLC values.</span>
+            <span>Updating every 30 seconds. Legacy models target +5 min; v2 challengers target +60 min (anchored to the clock hour). Hover on chart for OHLC values.</span>
             <span>Powered by Supabase & TradingView</span>
         </div>
     </div>
@@ -724,8 +724,17 @@
                     const pd = preds[modelName];
                     if (!pd) return;
 
+                    // v2 models forecast a longer horizon on the clock-hour grid and keep
+                    // their own history series; legacy models forecast the next 5-min candle.
+                    const isV2 = modelName.endsWith('_v2');
+                    const horizonMin = pd.horizon_min || 5;
+                    const horizonSec = horizonMin * 60;
+                    const baseSec = isV2 ? Math.floor(lastOpen / 3600) * 3600 : lastOpen;
+                    const tgtSec = isV2 ? baseSec + horizonSec : lastOpen + 300;
+                    const histForModel = isV2 ? (globalPayload.prediction_history_v2 || []) : predHist;
+
                     // Accuracy from this model's own matured predictions (windowed)
-                    const stats = ChartUtils.computeModelStats(predHist, hist5m, modelName,
+                    const stats = ChartUtils.computeModelStats(histForModel, hist5m, modelName,
                         { fromSec, toSec, lastN: 200 });
                     const label = labelOf(modelName);
                     const color = MODEL_COLORS[modelName];
@@ -744,14 +753,14 @@
                         `<div class="metric model-card">` +
                         `<small style="color:${color}">${label}</small>` +
                         `<b style="color:${color}">${fmtPrice(pd.price)}</b>` +
-                        `<div class="model-line"><span class="lbl">Expected 5m</span>` +
+                        `<div class="model-line"><span class="lbl">Expected ${horizonMin}m</span>` +
                             `<span class="val ${sigClass}">${chgStr} · ${sig}</span></div>` +
                         `<div class="model-line"><span class="lbl">Accuracy</span>` +
                             `<span class="val">${err} err · ${dir} dir</span></div>` +
                         `<div class="model-line"><span class="lbl">Matured</span>` +
                             `<span class="val">${stats.errorCount}</span></div>` +
                         `<div class="model-line"><span class="lbl">Candle</span>` +
-                            `<span class="val">${fmtHM(lastOpen)} → ${fmtHM(targetSec)}</span></div>` +
+                            `<span class="val">${fmtHM(baseSec)} → ${fmtHM(tgtSec)}</span></div>` +
                         `</div>`
                     );
                 });
@@ -879,9 +888,6 @@
                 const lastTime = lastCandle.time;
                 const lastClose = lastCandle.close;
 
-                // Prediction target is 1 candle (5 min) ahead of the last 5m candle
-                const futureTime = lastTime + 300;
-
                 // Render Active Models Overlay (Continuous History + Future target)
                 visibleModels.forEach(modelName => {
                     const predData = predictions[modelName];
@@ -890,6 +896,18 @@
                     const predPrice = predData.price;
                     const changePct = predData.change_pct;
                     const color = MODEL_COLORS[modelName];
+
+                    // v2 challenger models forecast a longer horizon (e.g. 60 min) and are
+                    // anchored to the clock-hour grid; legacy models forecast the next 5-min
+                    // candle. Pick the matching horizon, history series, and target time so
+                    // v2 dots land at the next hour boundary instead of +5 min.
+                    const isV2 = modelName.endsWith('_v2');
+                    const horizonMin = predData.horizon_min || 5;
+                    const horizonSec = horizonMin * 60;
+                    // Backend anchors v2 to the hour: target = floor(now, 1h) + horizon.
+                    const futureTime = isV2
+                        ? Math.floor(lastTime / 3600) * 3600 + horizonSec
+                        : lastTime + 300;
 
                     // One line series per contiguous run of points - Lightweight Charts
                     // connects straight across whitespace, so separate series are the
@@ -907,10 +925,14 @@
                         return s;
                     };
 
-                    const rawPredHistory = globalPayload.prediction_history || [];
+                    // v2 models live in their own hour-aligned series; legacy in the 5-min one
+                    const rawPredHistory = isV2
+                        ? (globalPayload.prediction_history_v2 || [])
+                        : (globalPayload.prediction_history || []);
 
-                    const intervalSec = 300;                 // always 5m candles
-                    const maxGapMs = 3 * intervalSec * 1000; // break the line after >15 min offline
+                    const candleInterval = 300;                   // candles are always 5m
+                    const intervalSec = isV2 ? horizonSec : 300;  // spacing of THIS model's points
+                    const maxGapMs = 3 * intervalSec * 1000;      // break the line after 3 missed points
                     const toMs = ChartUtils.toMs;
 
                     // Candle close lookup, used to discard history points that are far
@@ -918,7 +940,7 @@
                     const closeByTime = new Map(formattedHistory.map(c => [c.time, c.close]));
                     const nearestClose = (t) => {
                         for (const dt of [0, -1, 1, -2, 2, -3, 3]) {
-                            const c = closeByTime.get(t + dt * intervalSec);
+                            const c = closeByTime.get(t + dt * candleInterval);
                             if (c !== undefined) return c;
                         }
                         return undefined;
@@ -949,7 +971,19 @@
                     //    range includes the present - a past custom window has no live
                     //    forecast, showing one would mismatch old candles with new data.
                     const showLive = rangeToSec >= dataEndSec - 1800;
-                    if (showLive) {
+                    if (showLive && isV2) {
+                        // v2: a single forecast segment from the HOUR ANCHOR (e.g. 14:00,
+                        // the candle the model used) straight to the target (15:00) - so the
+                        // line literally spans the predicted hour, not "now -> +5 min".
+                        const anchorSec = Math.floor(lastTime / 3600) * 3600;
+                        const anchorClose = nearestClose(anchorSec);
+                        if (anchorClose !== undefined) {
+                            segments.push([
+                                { time: anchorSec, value: anchorClose },
+                                { time: futureTime, value: predPrice }
+                            ]);
+                        }
+                    } else if (showLive) {
                         const lastSeg = segments[segments.length - 1];
                         const continuesLastSeg = lastSeg &&
                             lastCandleMs - toMs(lastSeg[lastSeg.length - 1].time) <= maxGapMs;

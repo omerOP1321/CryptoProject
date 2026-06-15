@@ -480,6 +480,9 @@ models_tft = {}
 # Challenger (v2) models loaded from models_v2/ (inlined defs above; no pipeline
 # package needed). Stays empty unless artifacts exist.
 models_v2_dict = {}
+# v2 60-min forecasts run ONCE per clock hour and are cached here; the rest of the
+# hour's 5-min cycles reuse the cached result. Key: (symbol, model_name, hour_ts).
+v2_pred_cache = {}
 
 # Default features (9 features)
 LSTM_FEATURES = [
@@ -1177,6 +1180,7 @@ def run_inference(symbol, db_id):
         # 5-min cycle within that hour reproduces the same point (deduped by target time).
         last_time_dt = pd.Timestamp(df_hist['open_time'].iloc[-1])
         hour_anchor = last_time_dt.floor('h')
+        hour_key = int(hour_anchor.timestamp())
         df_anchor = df_hist[df_hist['open_time'] <= hour_anchor]
         for mt, name in (('lstm', 'LSTM_v2'), ('tft', 'Transformer_v2')):
             entry = models_v2_dict[symbol].get(mt)
@@ -1184,14 +1188,29 @@ def run_inference(symbol, db_id):
                 continue
             try:
                 mdl, scaler, meta = entry
-                # 5-min models forecast from the latest candle; longer-horizon models
-                # forecast from the hour anchor.
-                src = df_hist if meta.get("horizon") == 1 else df_anchor
-                if len(src) < 50:
-                    continue
-                out = v2_predict(src.tail(2000), mdl, scaler, meta)
-                if not out:
-                    continue
+                is_hourly = meta.get("horizon") != 1
+                if is_hourly:
+                    # Run the 60-min forecast only ONCE per clock hour, from the hour
+                    # anchor; reuse the cached result for the rest of the hour's cycles.
+                    ck = (symbol, name, hour_key)
+                    out = v2_pred_cache.get(ck)
+                    if out is None:
+                        if len(df_anchor) < 50:
+                            continue
+                        out = v2_predict(df_anchor.tail(2000), mdl, scaler, meta)
+                        if not out:
+                            continue
+                        for k in list(v2_pred_cache):        # drop stale-hour entries
+                            if k[2] != hour_key:
+                                del v2_pred_cache[k]
+                        v2_pred_cache[ck] = out
+                        print(f"   -> v2 {name} forecast computed for "
+                              f"{hour_anchor.strftime('%H:%M')} -> "
+                              f"{(hour_anchor + pd.Timedelta(minutes=out['horizon_min'])).strftime('%H:%M')}")
+                else:
+                    out = v2_predict(df_hist.tail(2000), mdl, scaler, meta)
+                    if not out:
+                        continue
                 results["predictions"][name] = {
                     "val": out["val"], "price": out["price"],
                     "change_pct": out["change_pct"], "signal": out["signal"],
@@ -1199,11 +1218,11 @@ def run_inference(symbol, db_id):
                 }
                 # 5-min models join the legacy series; longer-horizon models go to
                 # prediction_history_v2 at the next hour boundary (hour_anchor + horizon).
-                if meta.get("horizon") == 1:
-                    v2_hist_entries[name] = out["price"]
-                else:
+                if is_hourly:
                     v2_60m_entries[name] = out["price"]
-                    v2_target_time = int(hour_anchor.timestamp()) + int(meta.get("horizon", 12)) * 5 * 60
+                    v2_target_time = hour_key + int(meta.get("horizon", 12)) * 5 * 60
+                else:
+                    v2_hist_entries[name] = out["price"]
             except Exception as e:
                 print(f"   -> v2 {name} inference failed: {e}")
 
@@ -1330,6 +1349,28 @@ def seconds_to_next_boundary(interval_sec=300, offset_sec=10):
     next_boundary = (now // interval_sec + 1) * interval_sec + offset_sec
     return max(1.0, next_boundary - now)
 
+def print_model_status():
+    """Compact at-a-glance table of which models loaded per symbol (legacy + v2),
+    instead of scrolling back through the long per-file fetch/load log."""
+    hdr = f"  {'Symbol':<9}{'LSTM':^7}{'TFT':^7}{'v2 LSTM':^9}{'v2 TFT':^8}"
+    print("\n" + "═" * 44)
+    print("  📊 MODEL LOAD STATUS")
+    print("═" * 44)
+    print(hdr)
+    print("  " + "─" * (len(hdr) - 2))
+    tick = lambda ok: ("✓" if ok else "·")
+    for symbol, _ in COINS:
+        v2 = models_v2_dict.get(symbol, {})
+        print(f"  {symbol:<9}{tick(symbol in models_lstm):^7}{tick(symbol in models_tft):^7}"
+              f"{tick('lstm' in v2):^9}{tick('tft' in v2):^8}")
+    n_leg = len(models_lstm) + len(models_tft)
+    n_v2 = sum(len(v) for v in models_v2_dict.values())
+    print("═" * 44)
+    print(f"  legacy: {n_leg} loaded   |   v2: {n_v2} loaded "
+          f"({V2_HORIZON_MIN}min horizon)")
+    print("═" * 44 + "\n")
+
+
 if __name__ == "__main__":
     print("========================================")
     print("   🚀 Crypto AI Prediction Cloud Engine 🚀")
@@ -1338,6 +1379,7 @@ if __name__ == "__main__":
 
     initialize()
     init_v2()
+    print_model_status()
 
     while True:
         cycle_start = time.time()
