@@ -1,43 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
-
-import os
-import json
-from getpass import getpass
-
-# --- Supabase & Drive Setup ---
-try:
-    from google.colab import drive
-    drive.mount('/content/drive')
-    BASE_DIR = '/content/drive/MyDrive/CryptoProject'
-except ImportError:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-
-os.makedirs(BASE_DIR, exist_ok=True)
-CREDS_FILE = os.path.join(BASE_DIR, 'supabase_creds.json')
-
-if not os.path.exists(CREDS_FILE):
-    print("Supabase credentials not found. Let's set them up.")
-    print("Get these from Supabase Dashboard -> Project Settings -> API")
-    url = input("Enter Supabase Project URL: ").strip()
-    key = getpass("Enter Supabase SERVICE_ROLE Key (for Python backend): ").strip()
-    with open(CREDS_FILE, 'w') as f:
-        json.dump({'url': url, 'key': key}, f)
-    print(f"\n✅ Saved credentials to {CREDS_FILE}. Your colleagues can run this and enter their own keys without changing the code!")
-else:
-    print(f"✅ Supabase credentials found at {CREDS_FILE}")
-
-# Install requirements
-try:
-    get_ipython().run_line_magic('pip', 'install ta supabase')
-except NameError:
-    pass
-
-
 # In[2]:
+
+
+import sys; print(sys.executable)
+
+
+# In[3]:
 
 
 import os
@@ -506,17 +476,17 @@ SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 def get_drive_service():
     creds = None
     base_dir = DRIVE_BASE_DIR if (DRIVE_BASE_DIR and os.path.exists(DRIVE_BASE_DIR)) else os.getcwd()
-    
+
     token_path = os.path.join(base_dir, 'token.json')
     creds_path = os.path.join(base_dir, 'credentials.json')
-    
+
     if os.path.exists(token_path):
         try:
             creds = Credentials.from_authorized_user_file(token_path, SCOPES)
         except Exception as e:
             print(f"   -> ⚠️ Failed to load token.json: {e}")
             creds = None
-            
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
@@ -532,20 +502,20 @@ def get_drive_service():
                 print("2. Create an OAuth client ID (Desktop Application) and download the JSON file.")
                 print(f"3. Rename it to 'credentials.json' and place it in: {base_dir}\n")
                 return None
-                
+
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
                 creds = flow.run_local_server(port=0)
             except Exception as e:
                 print(f"   -> ❌ Google Drive Authentication failed: {e}")
                 return None
-            
+
         try:
             with open(token_path, 'w') as token:
                 token.write(creds.to_json())
         except Exception as e:
             print(f"   -> ⚠️ Failed to save token.json: {e}")
-            
+
     try:
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
@@ -559,14 +529,14 @@ def download_file_from_drive(service, filename, local_dest_path):
         query = f"name = '{filename}' and trashed = false"
         results = service.files().list(q=query, spaces='drive', fields='files(id, name, modifiedTime)').execute()
         items = results.get('files', [])
-        
+
         if not items:
             print(f"   -> ⚠️ File '{filename}' not found in Google Drive.")
             return False
-            
+
         items = sorted(items, key=lambda x: x['modifiedTime'], reverse=True)
         file_id = items[0]['id']
-        
+
         print(f"   -> Downloading '{filename}' from Google Drive (ID: {file_id})...")
         request = service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
@@ -574,7 +544,7 @@ def download_file_from_drive(service, filename, local_dest_path):
         done = False
         while not done:
             status, done = downloader.next_chunk()
-            
+
         os.makedirs(os.path.dirname(local_dest_path), exist_ok=True)
         with open(local_dest_path, 'wb') as f:
             f.write(fh.getvalue())
@@ -631,10 +601,10 @@ def fetch_missing_history(symbol, start_time_dt):
     print(f"   -> Gap detected. Fetching missing historical candles since {start_time_dt}...")
     start_ms = int(start_time_dt.timestamp() * 1000)
     end_ms = int(datetime.now().timestamp() * 1000)
-    
+
     all_dfs = []
     current_start = start_ms
-    
+
     while current_start < end_ms:
         params = {
             'symbol': symbol,
@@ -656,7 +626,7 @@ def fetch_missing_history(symbol, start_time_dt):
                 df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric)
                 df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
                 all_dfs.append(df)
-                
+
                 last_close_ms = data[-1][6]
                 current_start = last_close_ms + 1
                 time.sleep(0.1)
@@ -666,7 +636,7 @@ def fetch_missing_history(symbol, start_time_dt):
         except Exception as e:
             print(f"      -> ⚠️ Request failed: {e}")
             break
-            
+
     if all_dfs:
         return pd.concat(all_dfs)
     return pd.DataFrame()
@@ -766,6 +736,24 @@ def load_training_artifacts(symbol, tag):
         print(f"   -> ⚠️ Could not load training scaler for {symbol}/{tag}: {e}")
         return None, None
 
+def atomic_to_csv(df, path):
+    """Write a DataFrame to CSV atomically: write to a temp file in the same
+    directory, then os.replace() it into place. An interrupted/killed run can
+    never leave a half-written or duplicated-row CSV (which previously crashed
+    startup with a pandas ParserError)."""
+    import tempfile
+    d = os.path.dirname(os.path.abspath(path)) or '.'
+    fd, tmp = tempfile.mkstemp(suffix='.tmp', prefix='.csvwrite_', dir=d)
+    os.close(fd)
+    try:
+        df.to_csv(tmp, index=False)
+        os.replace(tmp, path)      # atomic rename on the same filesystem
+    except Exception:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
 def initialize():
     global df_hist_dict, scalers_dict, models_lstm, models_tft
 
@@ -789,10 +777,10 @@ def initialize():
                     # 1. Download model checkpoints
                     lstm_file = f'best_lstm_model_{symbol}.pth'
                     tft_file = f'best_tft_vsn_{symbol}.pth'
-                    
+
                     local_lstm_path = os.path.join(MODEL_DIR, lstm_file)
                     local_tft_path = os.path.join(MODEL_DIR, tft_file)
-                    
+
                     if not os.path.exists(local_lstm_path):
                         download_file_from_drive(service, lstm_file, local_lstm_path)
                     if not os.path.exists(local_tft_path):
@@ -828,20 +816,20 @@ def initialize():
             print("       -> Will attempt to load already cached models and data locally.")
 
     print("\n[Init] Loading models into memory & moving to GPU...")
-    
+
     # 1. Load LSTM models for each symbol
     for symbol, db_id in COINS:
         lstm_path = os.path.join(MODEL_DIR, f'best_lstm_model_{symbol}.pth')
         if not os.path.exists(lstm_path):
             lstm_path = os.path.join(MODEL_DIR, 'best_lstm_model.pth')
-            
+
         if os.path.exists(lstm_path):
             try:
                 state_dict = torch.load(lstm_path, map_location=DEVICE)
                 input_size = state_dict['lstm.weight_ih_l0'].shape[1]
                 hidden_size = state_dict['lstm.weight_hh_l0'].shape[1]
                 print(f"   -> Detected LSTM checkpoint for {symbol} (path: {os.path.basename(lstm_path)}) input size: {input_size} features, hidden size: {hidden_size}.")
-                
+
                 # Check architecture based on state_dict keys
                 if 'attention.attention.weight' in state_dict:
                     print(f"      -> Instantiating LSTMModel_ETH (Attention + MLP) for {symbol}")
@@ -868,14 +856,14 @@ def initialize():
         tft_path = os.path.join(MODEL_DIR, f'best_tft_vsn_{symbol}.pth')
         if not os.path.exists(tft_path):
             tft_path = os.path.join(MODEL_DIR, 'best_tft_vsn.pth')
-            
+
         if os.path.exists(tft_path):
             try:
                 state_dict = torch.load(tft_path, map_location=DEVICE)
                 d_model = state_dict['pos_encoder.pe'].shape[-1]
                 num_vars = state_dict['vsn.selector_grn.layer_norm.weight'].shape[0]
                 tft_features_subset = TFT_FEATURES[:num_vars]
-                
+
                 print(f"   -> Detected TFT checkpoint for {symbol} (path: {os.path.basename(tft_path)}) with d_model: {d_model}, num_vars: {num_vars}")
                 model_tft = TFTModel(input_dim=num_vars, num_vars=num_vars, d_model=d_model)
                 model_tft.load_state_dict(state_dict)
@@ -893,9 +881,14 @@ def initialize():
         csv_path = os.path.join(DATA_DIR, f'{symbol}_5m_data.csv')
         print(f"\n[Init] Loading historical data for {symbol} ({csv_path})...")
         if os.path.exists(csv_path):
-            df_hist = pd.read_csv(csv_path)
-            df_hist['open_time'] = pd.to_datetime(df_hist['open_time'])
-            
+            # Resilient load: skip malformed rows (bad field count or unparseable open_time)
+            df_hist = pd.read_csv(csv_path, on_bad_lines='warn')
+            df_hist['open_time'] = pd.to_datetime(df_hist['open_time'], errors='coerce')
+            _bad = int(df_hist['open_time'].isna().sum())
+            if _bad:
+                print(f"   -> ⚠️ Skipped {_bad} malformed row(s) with unparseable open_time in {csv_path}")
+                df_hist = df_hist.dropna(subset=['open_time']).reset_index(drop=True)
+
             # Check for gap between last row in CSV and current time
             if not df_hist.empty:
                 last_time = df_hist['open_time'].iloc[-1]
@@ -905,7 +898,7 @@ def initialize():
                     if not df_missing.empty:
                         df_hist = pd.concat([df_hist, df_missing]).drop_duplicates(subset=['open_time'], keep='last').sort_values('open_time')
                         # Save the updated history back to CSV to preserve it
-                        df_hist.to_csv(csv_path, index=False)
+                        atomic_to_csv(df_hist, csv_path)
                         print(f"      -> Synced {len(df_missing)} missing candles and updated local CSV.")
 
             df_hist_dict[symbol] = df_hist
@@ -961,7 +954,7 @@ def initialize():
             print(f"   -> ⚠️ No historical data found for {symbol}! Will initialize from live fetch.")
             df_hist = fetch_latest_data(symbol, limit=1000)
             df_hist_dict[symbol] = df_hist
-            df_hist.to_csv(csv_path, index=False)
+            atomic_to_csv(df_hist, csv_path)
             print(f"      -> Fetched and cached {len(df_hist)} latest candles.")
 
 def save_data_to_drive():
@@ -969,7 +962,7 @@ def save_data_to_drive():
         if df_hist is not None and not df_hist.empty:
             csv_path = os.path.join(DATA_DIR, f'{symbol}_5m_data.csv')
             print(f"🛑 [Session End] Saving updated historical data for {symbol}...")
-            df_hist.to_csv(csv_path, index=False)
+            atomic_to_csv(df_hist, csv_path)
             print(f"✅ Save complete! {len(df_hist)} rows written to {csv_path}.")
 
 def push_to_supabase(results, db_id):
@@ -1087,7 +1080,7 @@ def run_inference(symbol, db_id):
             lstm_features_subset = TFT_FEATURES[:input_size]
         else:
             lstm_features_subset = LSTM_FEATURES
-        
+
         tft_info = models_tft.get(symbol)
         if tft_info is not None:
             _, num_vars, tft_features_subset = tft_info
@@ -1214,7 +1207,7 @@ def run_inference(symbol, db_id):
                 results["predictions"][name] = {
                     "val": out["val"], "price": out["price"],
                     "change_pct": out["change_pct"], "signal": out["signal"],
-                    "horizon_min": out["horizon_min"],   # 60 -> frontend can label it correctly
+                    "horizon_min": out["horizon_min"],
                 }
                 # 5-min models join the legacy series; longer-horizon models go to
                 # prediction_history_v2 at the next hour boundary (hour_anchor + horizon).

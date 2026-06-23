@@ -8,6 +8,11 @@ models_v2/
 __pycache__/
 *.pyc
 
+# Ignore engine run logs and backups
+logs/
+*.log
+*.bak
+
 # Ignore virtual environment
 .venv/
 .venv312/

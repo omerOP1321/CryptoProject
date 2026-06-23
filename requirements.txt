@@ -1,0 +1,19 @@
+# Crypto AI inference engine — Python dependencies (Python 3.12).
+# Install with:  python -m pip install -r requirements.txt
+# (The run_engine launchers do this automatically on first run.)
+
+requests==2.34.2
+supabase==2.31.0
+pandas==3.0.3
+numpy==1.26.4
+torch==2.2.2
+ta==0.11.0
+scikit-learn==1.9.0
+statsmodels==0.14.6
+joblib==1.5.3
+
+# Google Drive (model + data sync)
+google-api-python-client==2.197.0
+google-auth==2.53.0
+google-auth-httplib2==0.4.0
+google-auth-oauthlib==1.4.0
