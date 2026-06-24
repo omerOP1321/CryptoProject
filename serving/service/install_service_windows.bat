@@ -8,7 +8,7 @@ REM Double-click this file to install. Use uninstall_service_windows.bat to stop
 REM ===========================================================================
 setlocal
 set "HERE=%~dp0"
-cd /d "%HERE%.."
+cd /d "%HERE%..\.."
 set "PROJ=%cd%"
 
 REM Require the venv to exist already (run run_engine.bat once first).

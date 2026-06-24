@@ -25,7 +25,12 @@ venv/
 *.npy
 *.keras
 
-# Ignore Supabase and Google Drive API credentials
+# Secrets — never commit real credentials.
+# The *.example.json templates and the README ARE tracked (placeholders only).
+secrets/*
+!secrets/README.md
+!secrets/*.example.json
+# (legacy locations, in case any are left at the root)
 supabase_creds.json
 credentials.json
 token.json

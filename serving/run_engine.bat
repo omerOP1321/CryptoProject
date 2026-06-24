@@ -12,7 +12,7 @@ REM reads. The site only updates while this is running. For always-on 24/7,
 REM use service\install_service_windows.bat instead.
 REM ===========================================================================
 setlocal EnableDelayedExpansion
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 REM --- locate (or create) the Python interpreter ----------------------------
 set "PY="
@@ -48,5 +48,5 @@ echo ========================================
 echo.
 
 set PYTHONUNBUFFERED=1
-"%PY%" inference_orchestrator.py 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath '%LOG%'"
+"%PY%" serving\inference_orchestrator.py 2>&1 | powershell -NoProfile -Command "$input | Tee-Object -FilePath '%LOG%'"
 pause

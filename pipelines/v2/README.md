@@ -1,9 +1,9 @@
 # `pipeline/` — Redesigned forecasting pipeline (staged, not yet in production)
 
 This is the staged implementation of the modeling items in
-[`audit_report.md`](../audit_report.md)'s action plan. It is **kept separate from
+[`audit_report.md`](../../docs/audit_report.md)'s action plan. It is **kept separate from
 the live system**: it reads the same `data/*.csv`, but writes new artifacts to
-`models_v2/`. The deployed engine (`inference_orchestrator.py`, `models/*.pth`)
+`models_v2/`. The deployed engine (`serving/inference_orchestrator.py`, `models/*.pth`)
 is untouched until you deliberately promote new models.
 
 ## What changed vs. the legacy pipeline

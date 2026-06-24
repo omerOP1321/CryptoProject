@@ -13,7 +13,7 @@
 # ===========================================================================
 set -uo pipefail
 
-cd "$(dirname "$0")" || { echo "Cannot find project folder."; read -r; exit 1; }
+cd "$(dirname "$0")/.." || { echo "Cannot find project folder."; read -r; exit 1; }
 
 # --- locate (or create) the Python interpreter ------------------------------
 if   [ -x ".venv312/bin/python" ]; then PY=".venv312/bin/python"
@@ -42,4 +42,4 @@ echo " Stop with: Ctrl+C"
 echo "========================================"
 echo
 
-PYTHONUNBUFFERED=1 "$PY" inference_orchestrator.py 2>&1 | tee -a "$LOG"
+PYTHONUNBUFFERED=1 "$PY" serving/inference_orchestrator.py 2>&1 | tee -a "$LOG"

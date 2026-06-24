@@ -20,6 +20,10 @@ import torch
 import torch.nn as nn
 from scipy.stats import binomtest
 from sklearn.preprocessing import StandardScaler
+import os
+
+# pipelines/v2/evaluation/ -> data/ is at the repo root (three levels up)
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 SEED = 42
 SEQ_LEN = 60
@@ -81,7 +85,7 @@ def dir_loss(pred, tgt):
 
 
 def train_eval(sym, target, loss_fn, reconstruct):
-    df = build(pd.read_csv(f'data/{sym}_5m_data.csv'))
+    df = build(pd.read_csv(os.path.join(ROOT, 'data', f'{sym}_5m_data.csv')))
     X, y, meta = seqs(df, target)
     n = int(len(X) * TRAIN_FRAC)
     sc = StandardScaler().fit(X[:n].reshape(-1, X.shape[-1]))

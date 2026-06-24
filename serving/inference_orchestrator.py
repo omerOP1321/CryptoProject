@@ -48,7 +48,7 @@ try:
     print("✅ Running in Google Colab (Drive Mounted).")
 except ImportError:
     try:
-        DRIVE_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        DRIVE_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     except NameError:
         DRIVE_BASE_DIR = os.getcwd()
     print(f"✅ Running locally. Base directory: {DRIVE_BASE_DIR}")
@@ -62,7 +62,7 @@ MODEL_DIR = os.path.join(DRIVE_BASE_DIR, 'models')
 DATA_DIR = os.path.join(DRIVE_BASE_DIR, 'data')
 
 # Supabase Configuration
-CREDS_FILE = os.path.join(DRIVE_BASE_DIR, 'supabase_creds.json')
+CREDS_FILE = os.path.join(DRIVE_BASE_DIR, 'secrets', 'supabase_creds.json')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 if os.path.exists(CREDS_FILE):
@@ -477,8 +477,8 @@ def get_drive_service():
     creds = None
     base_dir = DRIVE_BASE_DIR if (DRIVE_BASE_DIR and os.path.exists(DRIVE_BASE_DIR)) else os.getcwd()
 
-    token_path = os.path.join(base_dir, 'token.json')
-    creds_path = os.path.join(base_dir, 'credentials.json')
+    token_path = os.path.join(base_dir, 'secrets', 'token.json')
+    creds_path = os.path.join(base_dir, 'secrets', 'credentials.json')
 
     if os.path.exists(token_path):
         try:
@@ -500,7 +500,7 @@ def get_drive_service():
                 print("To run locally and fetch models from Drive, please:")
                 print("1. Go to Google Cloud Console -> APIs & Services -> Credentials")
                 print("2. Create an OAuth client ID (Desktop Application) and download the JSON file.")
-                print(f"3. Rename it to 'credentials.json' and place it in: {base_dir}\n")
+                print(f"3. Rename it to 'credentials.json' and place it in: {os.path.join(base_dir, 'secrets')}\n")
                 return None
 
             try:
@@ -767,7 +767,7 @@ def initialize():
 
     if not is_colab:
         base_dir = DRIVE_BASE_DIR if (DRIVE_BASE_DIR and os.path.exists(DRIVE_BASE_DIR)) else os.getcwd()
-        creds_path = os.path.join(base_dir, 'credentials.json')
+        creds_path = os.path.join(base_dir, 'secrets', 'credentials.json')
         if os.path.exists(creds_path):
             print("\n[Init] Local run & credentials.json detected. Connecting to Google Drive API...")
             service = get_drive_service()

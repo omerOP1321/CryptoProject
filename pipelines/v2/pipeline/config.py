@@ -5,7 +5,7 @@ This pipeline is the staged successor to the live %B models. It is intentionally
 kept SEPARATE from the production artifacts (best_lstm_model_*.pth, etc.) so the
 currently-deployed engine is untouched until you deliberately promote new models.
 
-Key design changes vs. the legacy pipeline (see audit_report.md):
+Key design changes vs. the legacy pipeline (see docs/audit_report.md):
   * Target is the H-step log-return, not next-step Bollinger %B.
   * A classification head (UP / FLAT / DOWN with a volatility dead-band) is
     trained jointly with the return regressor, so the model optimizes the thing
@@ -20,7 +20,8 @@ Key design changes vs. the legacy pipeline (see audit_report.md):
 
 import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# pipelines/v2/pipeline/ -> repo root is three levels up
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 # Staged artifacts go here, NOT in models/, so production is never overwritten.
 OUT_DIR = os.path.join(BASE_DIR, "models_v2")

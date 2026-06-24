@@ -43,7 +43,8 @@ import math
 import argparse
 import numpy as np
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# pipelines/v2/evaluation/ -> repo root is three levels up
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 COINS = [(1, "BTCUSDT"), (2, "ETHUSDT"), (3, "XRPUSDT")]
 HORIZON_SEC = 300  # models forecast 1 candle (5 min) ahead
 
@@ -73,7 +74,7 @@ except Exception:  # pragma: no cover - scipy fallback
 # ----------------------------------------------------------------------
 def fetch_production():
     """Return {symbol: payload} from the Supabase predictions table."""
-    creds = json.load(open(os.path.join(BASE_DIR, "supabase_creds.json")))
+    creds = json.load(open(os.path.join(BASE_DIR, "secrets", "supabase_creds.json")))
     from supabase import create_client
 
     sb = create_client(creds["url"], creds["key"])

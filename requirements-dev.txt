@@ -1,0 +1,12 @@
+# Developer/tooling dependencies (not needed to run the live engine).
+# Install with:  python -m pip install -r requirements-dev.txt
+
+# Keep the engine .py in sync with the notebook:
+#   jupyter nbconvert --to script serving/inference_orchestrator.ipynb
+nbconvert==7.17.1
+
+# Optional: notebook <-> .py pairing if you prefer auto-sync over manual nbconvert
+jupytext==1.16.4
+
+# Tests (website JS tests live under serving/website/tests once moved)
+pytest==8.3.4

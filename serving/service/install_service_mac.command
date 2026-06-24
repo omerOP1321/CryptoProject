@@ -8,7 +8,7 @@
 # ===========================================================================
 set -uo pipefail
 
-cd "$(dirname "$0")/.." || { echo "Cannot find project folder."; read -r; exit 1; }
+cd "$(dirname "$0")/../.." || { echo "Cannot find project folder."; read -r; exit 1; }
 PROJ="$(pwd)"
 LABEL="com.cryptoproject.engine"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -33,7 +33,7 @@ cat > "$PLIST" <<EOF
     <key>ProgramArguments</key>
     <array>
         <string>$PY</string>
-        <string>$PROJ/inference_orchestrator.py</string>
+        <string>$PROJ/serving/inference_orchestrator.py</string>
     </array>
     <key>WorkingDirectory</key><string>$PROJ</string>
     <key>RunAtLoad</key><true/>

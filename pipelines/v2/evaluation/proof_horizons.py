@@ -20,6 +20,10 @@ import torch
 import torch.nn as nn
 from scipy.stats import binomtest
 from sklearn.preprocessing import StandardScaler
+import os
+
+# pipelines/v2/evaluation/ -> data/ is at the repo root (three levels up)
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 SEED = 42
 SEQ_LEN = 60
@@ -79,7 +83,7 @@ def dir_loss(pred, tgt):
 
 
 def run(sym, H):
-    df = build(pd.read_csv(f'data/{sym}_5m_data.csv'), H)
+    df = build(pd.read_csv(os.path.join(ROOT, 'data', f'{sym}_5m_data.csv')), H)
     X, y, cur, fut = seqs(df)
     if len(X) < 120:
         return None

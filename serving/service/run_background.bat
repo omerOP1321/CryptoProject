@@ -2,7 +2,7 @@
 REM Internal helper: launched by Windows Task Scheduler to run the engine
 REM in the background (no visible window). Do not run this directly to test --
 REM use run_engine.bat for an interactive run.
-cd /d "%~dp0\.."
+cd /d "%~dp0\..\.."
 set "PROJ=%cd%"
 
 set "PY="
@@ -12,4 +12,4 @@ if not defined PY exit /b 1
 
 if not exist "%PROJ%\logs" mkdir "%PROJ%\logs"
 set PYTHONUNBUFFERED=1
-"%PY%" "%PROJ%\inference_orchestrator.py" >> "%PROJ%\logs\service.log" 2>&1
+"%PY%" "%PROJ%\serving\inference_orchestrator.py" >> "%PROJ%\logs\service.log" 2>&1

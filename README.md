@@ -14,20 +14,40 @@ model training (LSTM / TFT Transformer / ARIMA), evaluation, and a live forecast
 * Removes overlapping candles (duplicate timestamps).
 * Saves final data as a CSV inside the `data/` directory.
 ---
-## 📁 Project Structure 
+## 📁 Project Structure
+
+The repo has two clearly-separated halves — the **pipelines** that train models,
+and the **serving** system that runs the live product. See [`RUN.md`](RUN.md) to run
+it and [`docs/`](docs/) for the audit/design write-ups.
+
 ```
-project/
+CryptoProject/
 │
-├── data/                         # Stored CSV output
-├── src/
-│   ├── data_loader.py            # BinanceDataLoader (current)
-│   ├── preprocessing.py          # (future)
-│   ├── feature_engineering.py    # (future)
-│   ├── model_training.py         # (future)
-│   ├── inference.py              # (future)
-│   └── utils/                    # Helpers (future)
+├── data/                  # shared price CSVs        (gitignored)
+├── models/                # legacy weights           (gitignored) ← pipelines/legacy
+├── models_v2/             # v2 weights               (gitignored) ← pipelines/v2
 │
-└── README.md
+├── pipelines/
+│   ├── legacy/            # ORIGINAL pipeline (notebooks) → models/
+│   │   ├── preprocessing/ (lstm/ transformer/)
+│   │   ├── training/      (lstm/ transformer/)
+│   │   └── evaluation/    (crypto_eval.py, eval_graphs.ipynb)
+│   └── v2/                # REDESIGNED pipeline → models_v2/
+│       ├── pipeline/      (config, features, dataset, models, train, infer)
+│       └── evaluation/    (eval_harness.py, proof_*.py)
+│
+├── serving/               # THE LIVE PRODUCT
+│   ├── inference_orchestrator.{ipynb,py}   # the engine
+│   ├── run_engine.command / run_engine.bat # double-click launchers
+│   ├── service/           # always-on background-service installers
+│   └── website/           # (frontend currently still at repo-root website/)
+│
+├── data_collection/       # data_fetch.ipynb (Binance → data/), gui.ipynb
+├── docs/                  # audit_report.md, model_audit.md, agents/, ai-instructions/
+├── secrets/               # private credentials (gitignored; *.example.json tracked)
+├── website/               # live dashboard (Vercel) — move into serving/ later
+├── requirements.txt       # runtime deps   ·  requirements-dev.txt — tooling
+└── RUN.md  README.md
 ```
 ---
 ## 📊 Data Collection 
