@@ -401,11 +401,11 @@
                     <div class="checkbox-container">
                         <label class="checkbox-item">
                             <input type="checkbox" id="chk-lstm" checked onchange="toggleModel('LSTM')">
-                            <span style="color: #ffcc00;">LSTM (9f)</span>
+                            <span style="color: #ffcc00;">LSTM (5m) - Legacy</span>
                         </label>
                         <label class="checkbox-item">
                             <input type="checkbox" id="chk-tft" checked onchange="toggleModel('Transformer')">
-                            <span style="color: #ff00ff;">TFT (14f)</span>
+                            <span style="color: #ff00ff;">TFT (5m) - Legacy</span>
                         </label>
                         <label class="checkbox-item">
                             <input type="checkbox" id="chk-arima" checked onchange="toggleModel('ARIMA')">
@@ -413,11 +413,11 @@
                         </label>
                         <label class="checkbox-item">
                             <input type="checkbox" id="chk-lstm_v2" checked onchange="toggleModel('LSTM_v2')">
-                            <span style="color: #ff8800;">LSTM v2</span>
+                            <span style="color: #ff8800;">LSTM (1h) - V2</span>
                         </label>
                         <label class="checkbox-item">
                             <input type="checkbox" id="chk-tft_v2" checked onchange="toggleModel('Transformer_v2')">
-                            <span style="color: #00ff88;">TFT v2</span>
+                            <span style="color: #00ff88;">TFT (1h) - V2</span>
                         </label>
                     </div>
                 </div>
@@ -493,9 +493,10 @@
 
         // Display labels (card title + chart legend). Falls back to the key.
         const MODEL_LABELS = {
-            'Transformer': 'TFT',
-            'LSTM_v2': 'LSTM v2',
-            'Transformer_v2': 'TFT v2'
+            'LSTM': 'LSTM (5m) - Legacy',
+            'Transformer': 'TFT (5m) - Legacy',
+            'LSTM_v2': 'LSTM (1h) - V2',
+            'Transformer_v2': 'TFT (1h) - V2'
         };
         const labelOf = m => MODEL_LABELS[m] || m;
 
