@@ -83,6 +83,18 @@ INTERVAL = '5m'
 SEQ_LENGTH = 60  # must match training (preprocessing notebooks use SEQ_LENGTH = 60)
 BASE_URL = "https://api.binance.com/api/v3/klines"
 
+# --- Payload retention -------------------------------------------------------
+# How much prediction/candle history each coin's Supabase payload keeps. The
+# payload is a single JSON row polled by every visitor every ~30s, so these are
+# the knobs that trade "full history forever" against payload size / load time.
+#   None  -> keep EVERYTHING, no time or row limit (history never expires)
+#   <int> -> keep only that many days
+# Currently set to None per requirement: retain the complete prediction history
+# (5-min and v2) and the 5-min candles that back it, for as far back as data
+# exists. If the payload ever grows large enough to slow the site, set a day
+# count here (e.g. 365) instead of None.
+HISTORY_RETENTION_DAYS = None
+
 # --- 2. Model Architectures ---
 
 class LSTMModel(nn.Module):
@@ -1244,10 +1256,13 @@ def run_inference(symbol, db_id):
             history_df = pd.DataFrame([new_entry])
 
         history_df = history_df.drop_duplicates(subset=['time'], keep='last').sort_values('time')
-        # Prune entries older than 7 days - they fall off the chart and bloat the payload
-        cutoff = int(datetime.now().timestamp()) - 7 * 24 * 3600
-        history_df = history_df[history_df['time'] >= cutoff]
-        raw_history = history_df.tail(500).to_dict('records')
+        # Retention: keep the full prediction history (see HISTORY_RETENTION_DAYS).
+        # With None nothing is pruned, so the chart can show every prediction ever
+        # made; a day count trims older entries to bound payload size.
+        if HISTORY_RETENTION_DAYS is not None:
+            cutoff = int(datetime.now().timestamp()) - HISTORY_RETENTION_DAYS * 24 * 3600
+            history_df = history_df[history_df['time'] >= cutoff]
+        raw_history = history_df.to_dict('records')
         cleaned_history = []
         for entry in raw_history:
             cleaned_entry = {}
@@ -1277,10 +1292,12 @@ def run_inference(symbol, db_id):
             else:
                 df_v2 = pd.DataFrame([new_v2])
             df_v2 = df_v2.drop_duplicates(subset=['time'], keep='last').sort_values('time')
-            cutoff = int(datetime.now().timestamp()) - 7 * 24 * 3600
-            df_v2 = df_v2[df_v2['time'] >= cutoff]
+            # Same retention policy as the legacy series (see HISTORY_RETENTION_DAYS).
+            if HISTORY_RETENTION_DAYS is not None:
+                cutoff = int(datetime.now().timestamp()) - HISTORY_RETENTION_DAYS * 24 * 3600
+                df_v2 = df_v2[df_v2['time'] >= cutoff]
             cleaned_v2 = []
-            for entry in df_v2.tail(500).to_dict('records'):
+            for entry in df_v2.to_dict('records'):
                 cleaned_v2.append({k: (None if isinstance(v, float) and math.isnan(v) else v)
                                    for k, v in entry.items()})
             results["prediction_history_v2"] = cleaned_v2
@@ -1289,9 +1306,15 @@ def run_inference(symbol, db_id):
 
     # 8. Add History Aggregation (OHLC format for Candlestick charts with UNIX timestamp in seconds)
     try:
-        # 5m: last 2016 candles = 7 days (matches the 7-day prediction retention,
-        # so the dashboard can show genuine 5m candles for every range up to 7D)
-        h5 = df_hist.tail(2016)[['open_time', 'open', 'high', 'low', 'close']].copy()
+        # 5m candles must cover the same span as the prediction history so every
+        # stored prediction has a candle to render/score against. With retention
+        # off (HISTORY_RETENTION_DAYS = None) we ship the full 5m series; otherwise
+        # cap to the retained window (+1 day slack), at 288 5m candles per day.
+        if HISTORY_RETENTION_DAYS is None:
+            h5_src = df_hist
+        else:
+            h5_src = df_hist.tail((HISTORY_RETENTION_DAYS + 1) * 288)
+        h5 = h5_src[['open_time', 'open', 'high', 'low', 'close']].copy()
         h5['time'] = h5['open_time'].astype('datetime64[s]').astype(np.int64)
         hist_5m = h5[['time', 'open', 'high', 'low', 'close']].rename(
             columns={'open':'o', 'high':'h', 'low':'l', 'close':'c'}

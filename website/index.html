@@ -378,6 +378,10 @@
                     <button class="btn" data-range="12H" onclick="setRange('12H', this)">12H</button>
                     <button class="btn active" data-range="24H" onclick="setRange('24H', this)">24H</button>
                     <button class="btn" data-range="7D" onclick="setRange('7D', this)">7D</button>
+                    <button class="btn" data-range="30D" onclick="setRange('30D', this)">30D</button>
+                    <button class="btn" data-range="90D" onclick="setRange('90D', this)">90D</button>
+                    <button class="btn" data-range="1Y" onclick="setRange('1Y', this)">1Y</button>
+                    <button class="btn" data-range="ALL" onclick="setRange('ALL', this)">ALL</button>
                     <button class="btn" data-range="custom" onclick="setRange('custom', this)">Custom</button>
                 </div>
 
@@ -448,12 +452,14 @@
         let activeCoinId = 1;
         let visibleModels = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
 
-        // Time range selection. The candle resolution is derived from the range:
-        // All ranges render 5-minute candles. Max preset is 7D because the backend
-        // keeps 7 days of 5m candles (2016) and predictions are pruned at 7 days.
+        // Time range selection. All ranges render 5-minute candles. The backend now
+        // retains the FULL prediction history and the 5m candles behind it, so the
+        // presets reach far past 7D, and 'ALL' shows everything ever recorded.
+        const ALL_SPAN = 100 * 365 * 86400;   // effectively unbounded -> earliest data
         const RANGES = {
             '1H': 3600, '6H': 6 * 3600, '12H': 12 * 3600,
-            '24H': 24 * 3600, '7D': 7 * 86400
+            '24H': 24 * 3600, '7D': 7 * 86400, '30D': 30 * 86400,
+            '90D': 90 * 86400, '1Y': 365 * 86400, 'ALL': ALL_SPAN
         };
         let activeRange = localStorage.getItem('activeRange') || '24H';
         if (!RANGES[activeRange] && activeRange !== 'custom') activeRange = '24H';
@@ -1045,18 +1051,29 @@
                 };
                 window.__chart = chartInstance;
 
+                // Wide ranges (30D and up) are for browsing the full prediction
+                // history, so they fit the entire span instead of the recent live
+                // window, and don't snap back to "now" on each 5-min update.
+                const isWideRange = ['30D', '90D', '1Y', 'ALL'].includes(activeRange);
+
                 if (autoScaleEnabled) {
                     // ON (recent-focus live mode): Y auto-fits the VISIBLE region only,
                     // not the whole selected period. (Manual axis dragging silently
                     // disables the library autoScale, so re-assert it each render.)
                     chartInstance.priceScale('right').applyOptions({ autoScale: true });
                     if (isFirstRender) {
-                        // Fresh chart (range/coin change): zoom to the most recent window
-                        // so recent candles + predictions are large and readable.
-                        applyRecentFocus();
-                    } else {
-                        // Live update on the same chart: keep the newest candle and
+                        // Fresh chart (range/coin change): wide ranges show the whole
+                        // span; live ranges zoom to the most recent window so recent
+                        // candles + predictions are large and readable.
+                        if (isWideRange) {
+                            chartInstance.timeScale().fitContent();
+                        } else {
+                            applyRecentFocus();
+                        }
+                    } else if (!isWideRange) {
+                        // Live update on a live range: keep the newest candle and
                         // prediction pinned at the right edge, preserving the zoom.
+                        // Wide ranges keep the user's current view instead.
                         chartInstance.timeScale().scrollToRealTime();
                     }
                 } else if (isFirstRender) {
