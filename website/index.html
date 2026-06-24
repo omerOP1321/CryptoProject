@@ -597,9 +597,11 @@
                     chartContainer.innerHTML = '';
                     isFirstRender = true;
 
+                    const h = chartHeight();
+                    chartContainer.style.height = h + 'px';
                     chartInstance = LightweightCharts.createChart(chartContainer, {
                         width: chartContainer.clientWidth,
-                        height: 430,
+                        height: h,
                         layout: {
                             background: { color: 'rgba(0,0,0,0)' },
                             textColor: '#5b6675',
@@ -1003,10 +1005,20 @@
                     tiles + sessionChart + hitSection + errSection;
             }
 
+            function chartHeight() {
+                const w = window.innerWidth;
+                if (w <= 400) return 240;
+                if (w <= 640) return 280;
+                if (w <= 860) return 380;
+                return 430;
+            }
+
             window.addEventListener('resize', () => {
                 if (chartInstance) {
                     const chartContainer = document.getElementById('chart-area-target');
-                    chartInstance.resize(chartContainer.clientWidth, 430);
+                    const h = chartHeight();
+                    chartContainer.style.height = h + 'px';
+                    chartInstance.resize(chartContainer.clientWidth, h);
                 }
             });
             window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && statsOpen) closeStats(); });

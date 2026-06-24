@@ -394,7 +394,7 @@ header {
 .legend-item .lg-tag { color: var(--muted); font-size: 11px; }
 .legend-item.off { opacity: .32; }
 
-.chart-area { width: 100%; height: 430px; position: relative; margin-top: 6px; }
+.chart-area { width: 100%; height: 430px; position: relative; margin-top: 6px; overflow: hidden; }
 
 /* ---------- Footer ---------- */
 .footer {
@@ -636,8 +636,8 @@ header {
     margin-top: 14px;
     padding-top: 14px;
     border-top: 1px solid var(--card-border);
-    font-size: 20px;
-    color: #5cb2ff;
+    font-size: 11px;
+    color: var(--muted-label);
     letter-spacing: .02em;
 }
 
