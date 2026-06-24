@@ -518,20 +518,94 @@ header {
 .err-row .ev { font-size: 12px; font-weight: 600; text-align: right; }
 
 /* ---------- Mobile ---------- */
+/* ==========================================================================
+   RESPONSIVE — tablet (≤860px) → mobile (≤640px) → small phone (≤400px)
+   ========================================================================== */
+
+/* ---- Tablet: 2-col card grid ---- */
 @media (max-width: 860px) {
     .model-grid { grid-template-columns: 1fr 1fr; }
     .card.leading { grid-column: 1 / -1; }
+
+    /* Leading card: side-by-side layout when it spans full width */
+    .card.leading .lead-price { font-size: 24px; }
+    .ring { position: static; margin-left: auto; }
+
+    /* Stats drawer narrower on tablet */
+    .stats-drawer { width: 420px; }
+
+    /* Chart slightly shorter */
+    .chart-area { height: 380px; }
 }
+
+/* ---- Mobile: single column ---- */
 @media (max-width: 640px) {
-    .page { padding: 14px; }
-    .subbar { flex-direction: column; align-items: stretch; }
-    .coin-tabs { justify-content: space-between; }
-    .market-strip { flex-direction: column; align-items: flex-start; gap: 8px; }
-    .market-note { text-align: left; }
-    .model-grid { grid-template-columns: 1fr; }
+    /* Page */
+    .page { padding: 12px; }
+
+    /* Blobs too large on mobile — shrink them */
+    .blob.b1 { width: 280px; height: 280px; top: -60px; left: -60px; }
+    .blob.b2 { width: 240px; height: 240px; top: 140px; right: -60px; }
+
+    /* Header: stack brand + live chip */
+    header { flex-wrap: wrap; gap: 10px; }
+    .live-chip { font-size: 11px; padding: 6px 11px; }
+    .title { font-size: 16px; }
+    .logo { width: 28px; height: 28px; border-radius: 8px; }
+
+    /* Subbar: coin tabs + stats button stack */
+    .subbar { flex-direction: column; align-items: stretch; gap: 10px; }
+    .coin-tabs { justify-content: stretch; }
+    .coin-tab { flex: 1; align-items: center; padding: 8px 10px; }
+    .stats-btn { justify-content: center; }
+
+    /* Market strip */
+    .market-strip { flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 16px; }
+    .market-price { font-size: 24px; }
+    .market-note { text-align: left; font-size: 11px; }
+
+    /* Cards: single column, leading card full width */
+    .model-grid { grid-template-columns: 1fr; gap: 10px; }
     .card.leading { grid-column: auto; }
-    .chart-area { height: 340px; }
-    .footer { flex-direction: column; gap: 6px; }
+    .lead-price { font-size: 24px; }
+    .std-price { font-size: 19px; }
+    .ring { position: absolute; top: 14px; right: 14px; }
+
+    /* Chart */
+    .chart-card { padding: 14px; border-radius: 14px; }
+    .chart-head { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .chart-head-left { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .chart-chips { width: 100%; }
+    .chip { flex: 1; text-align: center; padding: 8px 10px; font-size: 11px; }
+    .range-seg { width: 100%; }
+    .seg-select { flex: 1; }
+    .chart-area { height: 280px; }
+    .legend { gap: 10px; }
+    .legend-item { font-size: 11px; }
+
+    /* Custom range inputs stack vertically */
+    .custom-range { flex-direction: column; align-items: stretch; }
+    .custom-range input { width: 100%; }
+
+    /* Footer */
+    .footer { flex-direction: column; gap: 8px; font-size: 11px; }
+
+    /* Stats drawer: full screen on mobile */
+    .stats-drawer { width: 100%; max-width: 100%; padding: 20px 16px; }
+    .stats-tiles { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat-tile { padding: 13px; }
+    .stat-tile .st-big { font-size: 20px; }
+    .team-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ---- Small phones (≤400px) ---- */
+@media (max-width: 400px) {
+    .coin-tab b { font-size: 12px; }
+    .coin-tab span { display: none; }   /* hide "Bitcoin" label, keep "BTC" */
+    .stats-tiles { grid-template-columns: 1fr; }
+    .team-grid { grid-template-columns: 1fr; }
+    .chart-area { height: 240px; }
+    .market-price { font-size: 22px; }
 }
 
 /* ---------- Footer links + credits (shared by all pages) ---------- */
