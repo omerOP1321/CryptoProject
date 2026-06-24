@@ -137,8 +137,8 @@
         const RANGES = { '1H': 3600, '6H': 6 * 3600, '12H': 12 * 3600, '24H': 24 * 3600 };
         for (let d = 2; d <= 30; d++) RANGES[d + 'D'] = d * 86400;
         RANGES['ALL'] = ALL_SPAN;
-        const RANGE_LABELS = { '1H': 'שעה', '6H': '6 שעות', '12H': '12 שעות', '24H': '24 שעות' };
-        for (let d = 2; d <= 30; d++) RANGE_LABELS[d + 'D'] = d + ' ימים';
+        const RANGE_LABELS = { '1H': 'hour', '6H': '6 hours', '12H': '12 hours', '24H': '24 hours' };
+        for (let d = 2; d <= 30; d++) RANGE_LABELS[d + 'D'] = d + ' days';
         let activeRange = localStorage.getItem('activeRange') || '12H';
         if (!RANGES[activeRange] && activeRange !== 'custom') activeRange = '12H';
         let customFromSec = null;

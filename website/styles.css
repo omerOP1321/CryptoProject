@@ -562,8 +562,8 @@ header {
     margin-top: 14px;
     padding-top: 14px;
     border-top: 1px solid var(--card-border);
-    font-size: 11px;
-    color: var(--muted-label);
+    font-size: 20px;
+    color: #5cb2ff;
     letter-spacing: .02em;
 }
 
