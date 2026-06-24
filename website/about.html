@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About · Crypto AI Prediction</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+
+    <div class="page">
+        <header>
+            <div class="brand">
+                <div class="logo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" fill="#fff"/>
+                    </svg>
+                </div>
+                <div class="title">Crypto AI Prediction</div>
+            </div>
+            <a href="index.html" class="back-link">‹ Back to dashboard</a>
+        </header>
+
+        <!-- =======================================================================
+             EDIT THE ABOUT CONTENT BELOW. It's plain HTML — change the text inside
+             the tags. Use <p> for paragraphs, <h3> for section headings,
+             <ul><li> for bullet lists, and <strong> to emphasise a word.
+             ======================================================================= -->
+        <div class="about">
+            <h2>About this project</h2>
+            <p class="about-sub">Real-time cryptocurrency price prediction powered by machine-learning models.</p>
+
+            <h3>What it does</h3>
+            <p>
+                This dashboard streams live market data for <strong>Bitcoin, Ethereum and Ripple</strong>
+                and shows short-horizon price forecasts from several AI models side by side. Each model's
+                prediction, recent accuracy and directional hit-rate are tracked live so you can compare how
+                they perform against one another.
+            </p>
+
+            <h3>The models</h3>
+            <ul>
+                <li><strong>ARIMA</strong> — the statistical baseline (leading model).</li>
+                <li><strong>LSTM (5M) &amp; TFT (5M)</strong> — legacy deep-learning models targeting the next 5 minutes.</li>
+                <li><strong>LSTM (1H) &amp; TFT (1H)</strong> — v2 challenger models targeting +60 minutes, anchored to the clock hour.</li>
+            </ul>
+
+            <h3>How it works</h3>
+            <p>
+                A serving pipeline collects market candles, runs each model, and writes the predictions to a
+                Supabase database. The dashboard polls that data every 30 seconds and renders it with
+                TradingView Lightweight Charts.
+            </p>
+
+            <h3>The team</h3>
+            <div class="team-grid">
+                <div class="team-card">
+                    <div class="tc-name">Ofir Zohar</div>
+                    <div class="tc-role">Team member</div>
+                </div>
+                <div class="team-card">
+                    <div class="tc-name">Omer Peretz</div>
+                    <div class="tc-role">Team member</div>
+                </div>
+                <div class="team-card">
+                    <div class="tc-name">Ofir Fichman</div>
+                    <div class="tc-role">Team member</div>
+                </div>
+                <div class="team-card">
+                    <div class="tc-name">Molly</div>
+                    <div class="tc-role">Team member</div>
+                </div>
+            </div>
+        </div>
+        <!-- ============================ END ABOUT CONTENT ========================= -->
+
+        <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
+    </div>
+</body>
+</html>

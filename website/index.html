@@ -3,347 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto AI Predictions Dashboard</title>
+    <title>Crypto AI Prediction</title>
     <!-- TradingView Lightweight Charts standalone production CDN -->
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="chart-utils.js"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
-        
-        :root {
-            --bg-base: #0a0b0d;
-            --bg-surface: #12141a;
-            --bg-card: rgba(22, 26, 37, 0.7);
-            --primary: #4e82ee;
-            --primary-glow: rgba(78, 130, 238, 0.35);
-            --green: #00e676;
-            --red: #ff3d71;
-            --text-main: #f5f6f9;
-            --text-muted: #848e9c;
-            --border-color: rgba(43, 49, 67, 0.6);
-        }
-
-        body { 
-            font-family: 'Outfit', sans-serif; 
-            background-color: var(--bg-base); 
-            color: var(--text-main); 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            padding: 20px; 
-            margin: 0;
-            min-height: 100vh;
-        }
-
-        .container { 
-            width: 95%; 
-            max-width: 1280px; 
-            background-color: var(--bg-surface); 
-            padding: 25px; 
-            border-radius: 20px; 
-            box-shadow: 0 12px 40px rgba(0,0,0,0.6); 
-            border: 1px solid var(--border-color);
-            margin-top: 10px;
-        }
-
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 15px;
-            margin-bottom: 25px;
-        }
-
-        h1 { 
-            color: var(--text-main); 
-            font-weight: 700;
-            font-size: 1.8em;
-            margin: 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        h1 span {
-            color: var(--primary);
-            text-shadow: 0 0 15px var(--primary-glow);
-        }
-
-        /* Coin Selector Tabs */
-        .tabs {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 20px;
-        }
-
-        .tab {
-            background: rgba(255,255,255,0.03);
-            border: 1px solid var(--border-color);
-            color: var(--text-muted);
-            padding: 10px 20px;
-            border-radius: 30px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 0.95em;
-            transition: all 0.25s ease;
-        }
-
-        .tab:hover {
-            color: var(--text-main);
-            background: rgba(255,255,255,0.07);
-        }
-
-        .tab.active {
-            background: var(--primary);
-            color: #ffffff;
-            border-color: var(--primary);
-            box-shadow: 0 0 20px var(--primary-glow);
-        }
-
-        /* Glassmorphic Metrics */
-        .metrics { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 18px;
-            margin-bottom: 25px; 
-        }
-
-        .metric { 
-            background: var(--bg-card);
-            backdrop-filter: blur(10px);
-            padding: 20px; 
-            border-radius: 16px; 
-            border: 1px solid var(--border-color);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .metric:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
-        }
-
-        .metric small { 
-            color: var(--text-muted); 
-            font-size: 0.85em; 
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            display: block;
-            margin-bottom: 6px;
-        }
-
-        .metric b { 
-            display: block; 
-            font-size: 1.6em; 
-            font-weight: 700;
-        }
-
-        .error-samples {
-            display: block;
-            margin-top: 4px;
-            font-size: 0.72em;
-            color: var(--text-muted);
-            letter-spacing: 0.3px;
-        }
-
-        .metric-sub {
-            font-size: 0.5em;
-            color: var(--text-muted);
-            letter-spacing: 1px;
-            text-transform: uppercase;
-        }
-
-        /* Self-contained model card rows */
-        .model-card b { margin-bottom: 6px; }
-        .model-line {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            gap: 10px;
-            font-size: 0.82em;
-            padding: 6px 0;
-            border-top: 1px solid var(--border-color);
-        }
-        .model-line .lbl {
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            font-size: 0.88em;
-        }
-        .model-line .val { font-weight: 600; color: var(--text-main); }
-        .sig-buy { color: var(--green); }
-        .sig-sell { color: var(--red); }
-        .sig-neutral { color: var(--text-muted); }
-
-        input[type="datetime-local"].btn {
-            color-scheme: dark;
-            font-family: 'Outfit', sans-serif;
-        }
-
-        .signal-long { color: var(--green); text-shadow: 0 0 10px rgba(0, 230, 118, 0.2); }
-        .signal-short { color: var(--red); text-shadow: 0 0 10px rgba(255, 61, 113, 0.2); }
-        .signal-neutral { color: var(--text-muted); }
-
-        /* Chart Area */
-        .chart-container-wrapper {
-            position: relative;
-            background-color: #0d0e12;
-            border-radius: 16px;
-            padding: 15px;
-            border: 1px solid var(--border-color);
-            margin-bottom: 20px;
-        }
-
-        .chart-area { 
-            width: 100%;
-            height: 520px; 
-            position: relative; 
-        }
-
-        /* Controls Panel */
-        .controls-panel {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(255,255,255,0.02);
-            border-radius: 12px;
-            padding: 15px 20px;
-            margin-bottom: 20px;
-            border: 1px solid rgba(255,255,255,0.03);
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-
-        .control-group {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .control-label {
-            color: var(--text-muted);
-            font-size: 0.9em;
-            font-weight: 600;
-        }
-
-        .btn { 
-            background: rgba(255,255,255,0.04); 
-            border: 1px solid var(--border-color); 
-            color: var(--text-muted); 
-            padding: 8px 16px; 
-            border-radius: 8px; 
-            cursor: pointer; 
-            font-weight: 600;
-            font-size: 0.9em;
-            transition: all 0.2s ease; 
-        }
-
-        .btn:hover { 
-            color: var(--text-main);
-            background: rgba(255,255,255,0.08); 
-        }
-
-        .btn.active { 
-            background: rgba(78, 130, 238, 0.15); 
-            border-color: var(--primary);
-            color: var(--primary);
-        }
-
-        /* Checkbox Toggles */
-        .checkbox-container {
-            display: flex;
-            align-items: center;
-            gap: 18px;
-        }
-
-        .checkbox-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            font-size: 0.9em;
-            font-weight: 600;
-            color: var(--text-muted);
-            user-select: none;
-            transition: color 0.2s ease;
-        }
-
-        .checkbox-item:hover {
-            color: var(--text-main);
-        }
-
-        .checkbox-item input {
-            cursor: pointer;
-            accent-color: var(--primary);
-            width: 16px;
-            height: 16px;
-        }
-
-        .footer { 
-            margin-top: 20px; 
-            font-size: 0.8em; 
-            color: var(--text-muted); 
-            display: flex;
-            justify-content: space-between;
-            width: 100%;
-        }
-
-        .setup-warning { 
-            background-color: rgba(255, 204, 0, 0.08); 
-            border: 1px solid #ffcc00; 
-            padding: 20px; 
-            border-radius: 12px; 
-            margin-bottom: 25px; 
-        }
-
-        .loading-spinner {
-            color: var(--text-muted);
-            text-align: center;
-            padding: 60px 0;
-            font-size: 1.1em;
-            font-weight: 600;
-        }
-
-        /* ---- Mobile layout (phones) ---- */
-        @media (max-width: 640px) {
-            body { padding: 8px; }
-            .container { width: 100%; padding: 14px; border-radius: 14px; margin-top: 4px; }
-
-            /* Header stacks; title wraps; sync status drops below */
-            header { flex-direction: column; align-items: flex-start; gap: 8px; padding-bottom: 12px; margin-bottom: 16px; }
-            h1 { font-size: 1.25em; flex-wrap: wrap; gap: 6px; }
-            #last-sync { font-size: 0.75em !important; max-width: 100%; }
-
-            /* Coin tabs wrap and shrink */
-            .tabs { flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-            .tab { padding: 8px 14px; font-size: 0.85em; }
-
-            /* One metric card per row, tighter */
-            .metrics { grid-template-columns: 1fr; gap: 10px; margin-bottom: 16px; }
-            .metric { padding: 14px; }
-            .metric b { font-size: 1.3em; }
-
-            /* Controls stack vertically; range/model buttons wrap instead of overflowing */
-            .controls-panel { flex-direction: column; align-items: stretch; gap: 12px; padding: 12px; }
-            .control-group { flex-wrap: wrap; gap: 8px; }
-            .btn { padding: 7px 11px; font-size: 0.82em; }
-            input[type="datetime-local"].btn { width: 100%; }
-            .checkbox-container { flex-wrap: wrap; gap: 12px; }
-
-            /* Shorter chart so it fits the viewport */
-            .chart-area { height: 360px; }
-            .chart-container-wrapper { padding: 8px; }
-
-            .footer { flex-direction: column; gap: 6px; font-size: 0.72em; }
-        }
-    </style>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+
+    <div class="page">
         <header>
-            <h1>🚀 Crypto <span>AI Prediction</span> Dashboard</h1>
-            <div id="last-sync" style="font-size: 0.85em; color: var(--text-muted);">Syncing...</div>
+            <div class="brand">
+                <div class="logo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" fill="#fff"/>
+                    </svg>
+                </div>
+                <div class="title">Crypto AI Prediction</div>
+            </div>
+            <div class="live-chip">
+                <span class="live-dot"></span>
+                <span id="last-sync">Live · Syncing…</span>
+            </div>
         </header>
 
         <div id="setup" class="setup-warning" style="display: none;">
@@ -351,170 +35,166 @@
             <p>Please enter your <strong>Supabase URL</strong> and <strong>Publishable Key</strong> in the <code>index.html</code> source code.</p>
         </div>
 
-        <!-- Coin Selector Tabs -->
-        <div class="tabs">
-            <button class="tab active" onclick="switchCoin('BTCUSDT', 1, this)">Bitcoin (BTC)</button>
-            <button class="tab" onclick="switchCoin('ETHUSDT', 2, this)">Ethereum (ETH)</button>
-            <button class="tab" onclick="switchCoin('XRPUSDT', 3, this)">Ripple (XRP)</button>
+        <div class="subbar">
+            <div class="coin-tabs">
+                <button class="coin-tab active" onclick="switchCoin('BTCUSDT', 1, this)"><b>BTC</b><span>Bitcoin</span></button>
+                <button class="coin-tab" onclick="switchCoin('ETHUSDT', 2, this)"><b>ETH</b><span>Ethereum</span></button>
+                <button class="coin-tab" onclick="switchCoin('XRPUSDT', 3, this)"><b>XRP</b><span>Ripple</span></button>
+            </div>
+            <button class="stats-btn" id="stats-btn" onclick="openStats()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                    <rect x="3" y="11" width="4" height="9" rx="1" fill="currentColor"/>
+                    <rect x="10" y="6" width="4" height="14" rx="1" fill="currentColor"/>
+                    <rect x="17" y="3" width="4" height="17" rx="1" fill="currentColor"/>
+                </svg>
+                <b id="stats-btn-label">BTC</b> Statistics <span class="chev">›</span>
+            </button>
         </div>
 
-        <div id="loading" class="loading-spinner">Connecting to Supabase...</div>
+        <div id="loading" class="loading-spinner">Connecting to Supabase…</div>
 
         <div id="content" style="display: none;">
-            <!-- Metrics Panels -->
-            <div class="metrics">
-                <div class="metric"><small>Last Market Price</small><b id="last-price">$0.00</b></div>
+            <div class="market-strip">
+                <div class="market-left">
+                    <span class="tiny-label">Last Market Price</span>
+                    <span class="market-price" id="last-price">$0.00</span>
+                    <span class="market-delta" id="market-delta"></span>
+                </div>
+                <div class="market-note" id="market-note">Bitcoin · 5 models · updates every 30s</div>
             </div>
 
-            <!-- Per-model recent accuracy (relative error of matured predictions) -->
-            <div class="metrics" id="error-metrics"></div>
+            <div class="model-grid" id="model-grid"></div>
 
-            <!-- Controls Panel -->
-            <div class="controls-panel">
-                <div class="control-group">
-                    <span class="control-label">Range:</span>
-                    <select id="range-select" class="btn" onchange="setRange(this.value)"></select>
-                    <button class="btn" data-range="ALL" onclick="setRange('ALL', this)">ALL</button>
-                    <button class="btn" data-range="custom" onclick="setRange('custom', this)">Custom</button>
-                </div>
-
-                <div class="control-group" id="custom-range-inputs" style="display: none;">
-                    <input type="datetime-local" id="custom-from" class="btn">
-                    <span class="control-label">to</span>
-                    <input type="datetime-local" id="custom-to" class="btn">
-                    <button class="btn" onclick="applyCustomRange()">Apply</button>
-                </div>
-
-                <div class="control-group">
-                    <button class="btn" id="btn-autoscale" onclick="toggleAutoScale()"
-                            title="Automatically fits the view to show all candles and model predictions, and keeps following live updates.">
-                        Auto Scale: ON
-                    </button>
-                    <button class="btn" id="btn-pricelines" onclick="togglePriceLines()"
-                            title="Show or hide the long horizontal price lines for each model.">
-                        Price Lines: ON
-                    </button>
-                </div>
-                
-                <div class="control-group">
-                    <span class="control-label">Models Overlay:</span>
-                    <div class="checkbox-container">
-                        <label class="checkbox-item">
-                            <input type="checkbox" id="chk-lstm" checked onchange="toggleModel('LSTM')">
-                            <span style="color: #ffcc00;">LSTM (5m) - Legacy</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" id="chk-tft" checked onchange="toggleModel('Transformer')">
-                            <span style="color: #ff00ff;">TFT (5m) - Legacy</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" id="chk-arima" checked onchange="toggleModel('ARIMA')">
-                            <span style="color: #00ffff;">ARIMA</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" id="chk-lstm_v2" checked onchange="toggleModel('LSTM_v2')">
-                            <span style="color: #ff8800;">LSTM (1h) - V2</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" id="chk-tft_v2" checked onchange="toggleModel('Transformer_v2')">
-                            <span style="color: #00ff88;">TFT (1h) - V2</span>
-                        </label>
+            <div class="chart-card">
+                <div class="chart-head">
+                    <div class="chart-head-left">
+                        <span class="chart-title">Prediction Chart</span>
+                        <div class="range-seg">
+                            <select id="range-select" class="seg-select" onchange="setRange(this.value)"></select>
+                            <button class="seg-btn" data-range="ALL" onclick="setRange('ALL', this)">All</button>
+                            <button class="seg-btn" data-range="custom" onclick="setRange('custom', this)">Custom</button>
+                        </div>
+                    </div>
+                    <div class="chart-chips">
+                        <button class="chip" id="btn-autoscale" onclick="toggleAutoScale()"
+                                title="Automatically fits the view to show all candles and model predictions, and keeps following live updates.">
+                            Auto Scale · On
+                        </button>
+                        <button class="chip" id="btn-pricelines" onclick="togglePriceLines()"
+                                title="Show or hide the long horizontal price lines for each model.">
+                            Price Lines · On
+                        </button>
                     </div>
                 </div>
-            </div>
 
-            <!-- TradingView Candlestick Chart -->
-            <div class="chart-container-wrapper">
+                <div class="custom-range" id="custom-range-inputs" style="display: none;">
+                    <input type="datetime-local" id="custom-from">
+                    <span class="control-label">to</span>
+                    <input type="datetime-local" id="custom-to">
+                    <button class="chip" onclick="applyCustomRange()">Apply</button>
+                </div>
+
+                <div class="legend" id="legend"></div>
+
                 <div class="chart-area" id="chart-area-target"></div>
             </div>
-        </div>
 
-        <div class="footer">
-            <span>Updating every 30 seconds. Legacy models target +5 min; v2 challengers target +60 min (anchored to the clock hour). Hover on chart for OHLC values.</span>
-            <span>Powered by Supabase & TradingView</span>
+            <div class="footer">
+                <span>Legacy models target +5 min · v2 challengers target +60 min (anchored to clock hour). Hover the chart for OHLC.</span>
+                <span><a href="about.html" class="about-link">About</a> · Powered by Supabase &amp; TradingView</span>
+            </div>
+            <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
         </div>
     </div>
+
+    <!-- Statistics drawer -->
+    <div class="stats-backdrop" id="stats-backdrop" onclick="closeStats()"></div>
+    <aside class="stats-drawer" id="stats-drawer">
+        <div class="stats-head">
+            <div>
+                <div class="eyebrow">Statistics</div>
+                <div class="stats-title" id="stats-title">Bitcoin · BTC</div>
+            </div>
+            <button class="stats-close" onclick="closeStats()">✕</button>
+        </div>
+        <div id="stats-body"></div>
+    </aside>
 
     <script>
         const SUPABASE_URL = 'https://iphxmjltsigsaocicipu.supabase.co';
         const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_4clMLjZVc1oacTPOb5XrUA_w9T5aevj';
 
         const isSetupComplete = SUPABASE_URL && !SUPABASE_URL.includes('YOUR_SUPABASE');
-        
+
         let activeCoin = 'BTCUSDT';
         let activeCoinId = 1;
         let visibleModels = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
+        let statsOpen = false;
 
         // Time range selection. All ranges render 5-minute candles. The backend now
         // retains the FULL prediction history and the 5m candles behind it.
-        // The dropdown holds hourly presets + every day from 2D to 30D; ALL and
-        // Custom live outside it as their own buttons. Built programmatically so the
-        // <select> options and the window math never drift apart.
-        const ALL_SPAN = 100 * 365 * 86400;   // effectively unbounded -> earliest data
+        const ALL_SPAN = 100 * 365 * 86400;
         const RANGES = { '1H': 3600, '6H': 6 * 3600, '12H': 12 * 3600, '24H': 24 * 3600 };
         for (let d = 2; d <= 30; d++) RANGES[d + 'D'] = d * 86400;
         RANGES['ALL'] = ALL_SPAN;
-        // Labels shown in the dropdown (the user's requested wording).
         const RANGE_LABELS = { '1H': 'שעה', '6H': '6 שעות', '12H': '12 שעות', '24H': '24 שעות' };
         for (let d = 2; d <= 30; d++) RANGE_LABELS[d + 'D'] = d + ' ימים';
-        let activeRange = localStorage.getItem('activeRange') || '24H';
-        if (!RANGES[activeRange] && activeRange !== 'custom') activeRange = '24H';
+        let activeRange = localStorage.getItem('activeRange') || '12H';
+        if (!RANGES[activeRange] && activeRange !== 'custom') activeRange = '12H';
         let customFromSec = null;
         let customToSec = null;
-        const activeResolution = '5m'; // candles are always 5m, every range
-        
+        const activeResolution = '5m';
+
         let globalPayload = null;
         let chartInstance = null;
         let candlestickSeries = null;
         let activeModelSeries = [];
         let lastRenderKey = '';
-        let lastBarCount = 0;          // candles in the current view (for recent-focus auto scale)
+        let lastBarCount = 0;
 
-        // Recent-focus Auto Scale: show the latest ~4h of 5m candles, with room on
-        // the right for the +15min prediction target, so live changes stay readable.
         const FOCUS_BARS = 48;
         const RIGHT_OFFSET = 5;
 
-        // Auto Scale: persisted across page loads, default ON
         let autoScaleEnabled = localStorage.getItem('autoScaleEnabled') !== 'false';
         let priceLinesEnabled = localStorage.getItem('priceLinesEnabled') !== 'false';
 
-        // Colors configurations for overlay models. The *_v2 entries are the
-        // staged challenger models (return-based + direction head). They appear
-        // automatically once the backend starts writing them; until then their
-        // cards/lines simply don't render (no data => skipped).
+        // Model accent colors (new design palette).
         const MODEL_COLORS = {
-            'LSTM': '#ffcc00',           // Yellow
-            'Transformer': '#ff00ff',    // Magenta
-            'ARIMA': '#00ffff',          // Cyan
-            'LSTM_v2': '#ff8800',        // Orange   (challenger)
-            'Transformer_v2': '#00ff88'  // Green    (challenger)
+            'LSTM': '#3b9eff',           // royal blue
+            'Transformer': '#e25bd0',    // magenta
+            'ARIMA': '#22d3ee',          // cyan (leading)
+            'LSTM_v2': '#f5a524',        // amber (challenger)
+            'Transformer_v2': '#818cf8'  // indigo (challenger)
         };
 
-        // Display labels (card title + chart legend). Falls back to the key.
         const MODEL_LABELS = {
-            'LSTM': 'LSTM (5m) - Legacy',
-            'Transformer': 'TFT (5m) - Legacy',
-            'LSTM_v2': 'LSTM (1h) - V2',
-            'Transformer_v2': 'TFT (1h) - V2'
+            'LSTM': 'LSTM (5M)',
+            'Transformer': 'TFT (5M)',
+            'ARIMA': 'ARIMA',
+            'LSTM_v2': 'LSTM (1H)',
+            'Transformer_v2': 'TFT (1H)'
+        };
+        const MODEL_TAGS = {
+            'LSTM': 'Legacy', 'Transformer': 'Legacy', 'ARIMA': 'Base',
+            'LSTM_v2': 'V2', 'Transformer_v2': 'V2'
         };
         const labelOf = m => MODEL_LABELS[m] || m;
 
-        // Map a model key -> its overlay checkbox id suffix.
-        const CHK_ID = {
-            'LSTM': 'lstm', 'Transformer': 'tft', 'ARIMA': 'arima',
-            'LSTM_v2': 'lstm_v2', 'Transformer_v2': 'tft_v2'
+        // Card / legend ordering: leading (ARIMA) is rendered separately.
+        const STD_ORDER = ['LSTM', 'Transformer', 'LSTM_v2', 'Transformer_v2'];
+        const LEGEND_ORDER = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
+        const LEADING = 'ARIMA';
+
+        const COIN_META = {
+            'BTCUSDT': { name: 'Bitcoin', sym: 'BTC' },
+            'ETHUSDT': { name: 'Ethereum', sym: 'ETH' },
+            'XRPUSDT': { name: 'Ripple', sym: 'XRP' }
         };
 
-        // Candle/prediction timestamps are UTC Unix seconds, and Lightweight Charts
-        // renders timestamps in UTC. These formatters shift by the viewer's local
-        // offset so the axis + crosshair display LOCAL time. Display-only: the
-        // underlying data stays UTC, so range/gap/filter logic is unaffected.
         const TZ_OFFSET_SEC = -new Date().getTimezoneOffset() * 60;
         const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
         function localTickLabel(utcSec, tickType) {
             const d = new Date((utcSec + TZ_OFFSET_SEC) * 1000);
-            // tickType < 3 = Year/Month/Day boundary -> show date; otherwise HH:MM
             if (tickType < 3) return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
             return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
         }
@@ -522,6 +202,52 @@
             const d = new Date((utcSec + TZ_OFFSET_SEC) * 1000);
             return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ` +
                    `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+        }
+
+        // ---------- small SVG builders ----------
+        function fmtPrice(p) {
+            return '$' + Number(p).toLocaleString(undefined,
+                { minimumFractionDigits: p < 10 ? 4 : 2, maximumFractionDigits: p < 10 ? 4 : 2 });
+        }
+        function signalInfo(chg) {
+            if (chg > 0.1) return { sig: 'BUY', cls: 'sig-buy' };
+            if (chg < -0.1) return { sig: 'SELL', cls: 'sig-sell' };
+            return { sig: 'NEUTRAL', cls: 'sig-neutral' };
+        }
+        function pctPill(chg) {
+            const s = `${chg > 0 ? '+' : ''}${chg.toFixed(2)}%`;
+            const cls = chg > 0.01 ? 'pct-pos' : (chg < -0.01 ? 'pct-neg' : 'pct-flat');
+            return `<span class="pct-pill ${cls}">${s}</span>`;
+        }
+        function buildSparkline(values, color) {
+            const w = 200, h = 30, n = values.length;
+            if (n < 2) return `<div class="spark"></div>`;
+            const min = Math.min(...values), max = Math.max(...values);
+            const span = (max - min) || 1;
+            const pts = values.map((v, i) => {
+                const x = (i / (n - 1)) * w;
+                const y = h - 3 - ((v - min) / span) * (h - 6);
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+            }).join(' ');
+            return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+                <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6"
+                    stroke-linejoin="round" stroke-linecap="round"
+                    style="filter:drop-shadow(0 0 3px ${color}66)"/>
+            </svg>`;
+        }
+        function buildRing(pct, color) {
+            if (pct === null) pct = 0;
+            const r = 24, c = 2 * Math.PI * r, off = c * (1 - pct / 100);
+            return `<svg width="58" height="58" viewBox="0 0 58 58">
+                <circle cx="29" cy="29" r="${r}" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="5"/>
+                <circle cx="29" cy="29" r="${r}" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round"
+                    stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"
+                    transform="rotate(-90 29 29)"/>
+                <text x="29" y="28" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="600"
+                    font-family="Sora">${Math.round(pct)}%</text>
+                <text x="29" y="39" text-anchor="middle" fill="rgba(255,255,255,.45)" font-size="7"
+                    letter-spacing=".05em" font-family="Sora">correct</text>
+            </svg>`;
         }
 
         if (isSetupComplete) {
@@ -539,7 +265,7 @@
 
                     if (error) {
                         if (error.code === 'PGRST116') {
-                            document.getElementById('loading').innerText = `⏳ Waiting for live predictions for ${activeCoin}...`;
+                            document.getElementById('loading').innerText = `⏳ Waiting for live predictions for ${activeCoin}…`;
                             return;
                         }
                         throw error;
@@ -548,16 +274,13 @@
                     if (data && data.payload) {
                         globalPayload = data.payload;
 
-                        // Staleness check: payload.timestamp is the last candle time (UTC).
                         const syncElem = document.getElementById('last-sync');
                         const payloadTime = new Date(data.payload.timestamp.replace(' ', 'T') + 'Z');
                         const ageMin = (Date.now() - payloadTime.getTime()) / 60000;
                         if (!isNaN(ageMin) && ageMin > 15) {
-                            syncElem.innerText = `⚠️ Predictions stale (${Math.round(ageMin)} min old) — engine may be offline`;
-                            syncElem.style.color = '#ffcc00';
+                            syncElem.innerText = `Stale · ${Math.round(ageMin)} min old`;
                         } else {
-                            syncElem.innerText = `Last Sync: ${new Date().toLocaleTimeString()}`;
-                            syncElem.style.color = '';
+                            syncElem.innerText = `Live · Synced ${new Date().toLocaleTimeString()}`;
                         }
 
                         renderDashboard();
@@ -571,39 +294,32 @@
             function switchCoin(symbol, id, tab) {
                 activeCoin = symbol;
                 activeCoinId = id;
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.coin-tab').forEach(t => t.classList.remove('active'));
                 if (tab) tab.classList.add('active');
-                
+
+                const meta = COIN_META[symbol] || { sym: symbol };
+                document.getElementById('stats-btn-label').innerText = meta.sym;
+                document.getElementById('stats-title').innerText = `${meta.name} · ${meta.sym}`;
+
                 document.getElementById('loading').style.display = 'block';
-                document.getElementById('loading').innerText = `Connecting to Supabase for ${symbol}...`;
+                document.getElementById('loading').innerText = `Connecting to Supabase for ${meta.sym}…`;
                 document.getElementById('content').style.display = 'none';
 
-                // Reset chart instance to force recreation and fitting when switching coins
-                if (chartInstance) {
-                    chartInstance = null;
-                }
+                if (chartInstance) chartInstance = null;
+                lastRenderKey = '';
 
                 fetchPredictions();
             }
 
-            // [fromSec, toSec] of the selected window. Predefined ranges are
-            // anchored at the newest available candle, NOT the wall clock - when
-            // the engine has been offline for a while, a clock-anchored short
-            // window would be empty (or force a coarser resolution) even though
-            // data exists. Custom ranges use the user-entered absolute bounds.
             function rangeWindow(dataEndSec) {
                 if (activeRange === 'custom' && customFromSec && customToSec) {
                     return [customFromSec, customToSec];
                 }
                 const endSec = dataEndSec || Math.floor(Date.now() / 1000);
-                const span = RANGES[activeRange] || RANGES['24H'];
+                const span = RANGES[activeRange] || RANGES['12H'];
                 return [endSec - span, endSec];
             }
 
-            // Fill the range <select> with the hourly + 2D..30D presets (ALL/Custom
-            // stay as buttons). A blank placeholder lets the dropdown show "no preset"
-            // while ALL/Custom is active, AND ensures re-picking the displayed preset
-            // still fires onchange.
             function populateRangeSelect() {
                 const sel = document.getElementById('range-select');
                 if (!sel) return;
@@ -615,14 +331,12 @@
 
             function updateRangeButtons() {
                 const sel = document.getElementById('range-select');
-                // A dropdown preset is active when activeRange is a known range that
-                // isn't ALL (ALL and custom are the outside-the-dropdown buttons).
                 const inDropdown = RANGES[activeRange] !== undefined && activeRange !== 'ALL';
                 if (sel) {
                     sel.value = inDropdown ? activeRange : '';
                     sel.classList.toggle('active', inDropdown);
                 }
-                document.querySelectorAll('.btn[data-range]').forEach(b =>
+                document.querySelectorAll('.seg-btn[data-range]').forEach(b =>
                     b.classList.toggle('active', b.dataset.range === activeRange));
                 document.getElementById('custom-range-inputs').style.display =
                     activeRange === 'custom' ? 'flex' : 'none';
@@ -632,9 +346,8 @@
                 activeRange = range;
                 localStorage.setItem('activeRange', range);
                 updateRangeButtons();
-                // Custom waits for the user to pick bounds and hit Apply
                 if (range === 'custom' && (!customFromSec || !customToSec)) return;
-                chartInstance = null; // force recreation + recent-focus for the new window
+                chartInstance = null;
                 renderDashboard();
             }
 
@@ -656,14 +369,10 @@
 
             function updateAutoScaleButton() {
                 const btn = document.getElementById('btn-autoscale');
-                btn.innerText = `Auto Scale: ${autoScaleEnabled ? 'ON' : 'OFF'}`;
+                btn.innerText = `Auto Scale · ${autoScaleEnabled ? 'On' : 'Off'}`;
                 btn.classList.toggle('active', autoScaleEnabled);
             }
 
-            // Focus the view on the most recent FOCUS_BARS candles, anchored at the
-            // right edge with room for the future prediction target. The price scale's
-            // autoScale then fits Y to just this visible window, so small prediction
-            // changes stay large and readable instead of being compressed.
             function applyRecentFocus() {
                 if (!chartInstance || !lastBarCount) return;
                 const r = ChartUtils.recentFocusRange(lastBarCount, FOCUS_BARS, RIGHT_OFFSET);
@@ -679,18 +388,13 @@
                 updateAutoScaleButton();
                 if (chartInstance) {
                     chartInstance.priceScale('right').applyOptions({ autoScale: autoScaleEnabled });
-                    if (autoScaleEnabled) {
-                        // ON: zoom to the recent window so live prediction changes are
-                        // clearly visible (NOT the whole selected period).
-                        applyRecentFocus();
-                    }
-                    // OFF: leave the current zoom/pan and Y-range exactly as they are.
+                    if (autoScaleEnabled) applyRecentFocus();
                 }
             }
 
             function updatePriceLinesButton() {
                 const btn = document.getElementById('btn-pricelines');
-                btn.innerText = `Price Lines: ${priceLinesEnabled ? 'ON' : 'OFF'}`;
+                btn.innerText = `Price Lines · ${priceLinesEnabled ? 'On' : 'Off'}`;
                 btn.classList.toggle('active', priceLinesEnabled);
             }
 
@@ -698,104 +402,118 @@
                 priceLinesEnabled = !priceLinesEnabled;
                 localStorage.setItem('priceLinesEnabled', String(priceLinesEnabled));
                 updatePriceLinesButton();
-                // Price lines are attached to series, so rebuild the chart to add/remove them
                 chartInstance = null;
                 lastRenderKey = '';
                 renderDashboard();
             }
 
+            // Legend chips toggle a model's chart overlay (cards always stay visible).
             function toggleModel(modelName) {
-                const isChecked = document.getElementById(`chk-${CHK_ID[modelName] || modelName.toLowerCase()}`).checked;
-                
-                if (isChecked) {
-                    if (!visibleModels.includes(modelName)) visibleModels.push(modelName);
-                } else {
+                if (visibleModels.includes(modelName)) {
                     visibleModels = visibleModels.filter(m => m !== modelName);
+                } else {
+                    visibleModels.push(modelName);
                 }
-                
+                renderLegend();
+                chartInstance = null;
+                lastRenderKey = '';
                 renderDashboard();
             }
 
+            function renderLegend() {
+                const el = document.getElementById('legend');
+                el.innerHTML = LEGEND_ORDER.map(m => {
+                    const color = MODEL_COLORS[m];
+                    const off = visibleModels.includes(m) ? '' : ' off';
+                    return `<div class="legend-item${off}" style="color:${color}" onclick="toggleModel('${m}')">
+                        <span class="lg-line"></span>
+                        <span style="color:var(--text)">${labelOf(m)}</span>
+                        <span class="lg-tag">${MODEL_TAGS[m]}</span>
+                    </div>`;
+                }).join('');
+            }
 
-            // Render one self-contained card per model. Each card draws ONLY from that
-            // model's own data: historical accuracy (ERR/DIR/matured over the selected
-            // window) plus its live prediction (predicted price, expected 5-min change,
-            // BUY/SELL/NEUTRAL signal) and the prediction/target candle times.
-            function renderModelErrors(fromSec, toSec) {
-                const container = document.getElementById('error-metrics');
-                const hist5m = (globalPayload.history && globalPayload.history['5m']) || [];
-                const predHist = globalPayload.prediction_history || [];
+            // Per-model live + accuracy data for cards and the stats drawer.
+            function computeModelInfo(modelName, fromSec, toSec, hist5m, formattedHistory, lastPrice) {
+                const preds = globalPayload.predictions || {};
+                const pd = preds[modelName];
+                if (!pd) return null;
+                const isV2 = modelName.endsWith('_v2');
+                const histForModel = isV2 ? (globalPayload.prediction_history_v2 || [])
+                                          : (globalPayload.prediction_history || []);
+                const stats = ChartUtils.computeModelStats(histForModel, hist5m, modelName,
+                    { fromSec, toSec, lastN: 200 });
 
-                if (hist5m.length === 0) {
-                    container.innerHTML = '';
-                    return;
+                // Sparkline from this model's recent prediction history (sane points only),
+                // falling back to the candle closes so a card always shows a line.
+                let vals = histForModel.map(e => Number(e[modelName]))
+                    .filter(v => Number.isFinite(v) && lastPrice > 0 &&
+                                 Math.abs(v - lastPrice) / lastPrice <= 0.1)
+                    .slice(-24);
+                if (vals.length < 2) {
+                    vals = formattedHistory.slice(-24).map(c => c.close);
+                }
+                return { pd, stats, isV2, spark: vals };
+            }
+
+            function renderModelCards(fromSec, toSec, hist5m, formattedHistory, lastPrice) {
+                const grid = document.getElementById('model-grid');
+                const cards = [];
+
+                // --- Leading card (ARIMA) ---
+                const lead = computeModelInfo(LEADING, fromSec, toSec, hist5m, formattedHistory, lastPrice);
+                if (lead) {
+                    const color = MODEL_COLORS[LEADING];
+                    const { sig, cls } = signalInfo(lead.pd.change_pct);
+                    const err = lead.stats.avgError !== null ? lead.stats.avgError.toFixed(2) + '% err' : '—';
+                    const dir = lead.stats.dirAccuracy !== null ? lead.stats.dirAccuracy.toFixed(0) + '%' : '—';
+                    cards.push(`<div class="card leading">
+                        <div class="ring">${buildRing(lead.stats.dirAccuracy, color)}</div>
+                        <div class="card-top">
+                            <span class="lead-badge">★ LEADING MODEL</span>
+                        </div>
+                        <div class="model-name"><span class="dot" style="background:${color}"></span> ${labelOf(LEADING)}</div>
+                        <div class="lead-price">${fmtPrice(lead.pd.price)}</div>
+                        <div class="pred-row">${pctPill(lead.pd.change_pct)}<span class="signal ${cls}">${sig}</span></div>
+                        ${buildSparkline(lead.spark, color)}
+                        <div class="card-footer">
+                            <div class="foot-stat"><span class="fl">Avg Error</span><span class="fv">${err}</span></div>
+                            <div class="foot-stat"><span class="fl">Calls Correct</span><span class="fv accent">${dir}</span></div>
+                            <div class="foot-stat"><span class="fl">Calls Made</span><span class="fv">${lead.stats.errorCount}</span></div>
+                        </div>
+                    </div>`);
                 }
 
-                const preds = globalPayload.predictions || {};
-                // Both timestamps are shared across models: the prediction is made from
-                // the latest candle and forecasts the next one (+5 min).
-                const lastOpen = hist5m[hist5m.length - 1].time;
-                const targetSec = lastOpen + 300;
-                const fmtHM = sec => {
-                    const d = new Date((sec + TZ_OFFSET_SEC) * 1000);
-                    return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
-                };
-                const fmtPrice = p => '$' + Number(p).toLocaleString(undefined,
-                    { minimumFractionDigits: p < 10 ? 4 : 2, maximumFractionDigits: p < 10 ? 4 : 2 });
-
-                const cards = [];
-                Object.keys(MODEL_COLORS).forEach(modelName => {
-                    const pd = preds[modelName];
-                    if (!pd) return;
-
-                    // v2 models forecast a longer horizon on the clock-hour grid and keep
-                    // their own history series; legacy models forecast the next 5-min candle.
-                    const isV2 = modelName.endsWith('_v2');
-                    const horizonMin = pd.horizon_min || 5;
-                    const horizonSec = horizonMin * 60;
-                    const baseSec = isV2 ? Math.floor(lastOpen / 3600) * 3600 : lastOpen;
-                    const tgtSec = isV2 ? baseSec + horizonSec : lastOpen + 300;
-                    const histForModel = isV2 ? (globalPayload.prediction_history_v2 || []) : predHist;
-
-                    // Accuracy from this model's own matured predictions (windowed)
-                    const stats = ChartUtils.computeModelStats(histForModel, hist5m, modelName,
-                        { fromSec, toSec, lastN: 200 });
-                    const label = labelOf(modelName);
-                    const color = MODEL_COLORS[modelName];
-                    const err = stats.avgError !== null ? stats.avgError.toFixed(2) + '%' : '—';
-                    const dir = stats.dirAccuracy !== null ? stats.dirAccuracy.toFixed(0) + '%' : '—';
-
-                    // Live prediction + per-model signal (BUY/SELL/NEUTRAL from its own change)
-                    const chg = pd.change_pct;
-                    const chgStr = `${chg > 0 ? '+' : ''}${chg.toFixed(2)}%`;
-                    let sig, sigClass;
-                    if (chg > 0.1) { sig = 'BUY'; sigClass = 'sig-buy'; }
-                    else if (chg < -0.1) { sig = 'SELL'; sigClass = 'sig-sell'; }
-                    else { sig = 'NEUTRAL'; sigClass = 'sig-neutral'; }
-
-                    cards.push(
-                        `<div class="metric model-card">` +
-                        `<small style="color:${color}">${label}</small>` +
-                        `<b style="color:${color}">${fmtPrice(pd.price)}</b>` +
-                        `<div class="model-line"><span class="lbl">Expected ${horizonMin}m</span>` +
-                            `<span class="val ${sigClass}">${chgStr} · ${sig}</span></div>` +
-                        `<div class="model-line"><span class="lbl">Accuracy</span>` +
-                            `<span class="val">${err} err · ${dir} dir</span></div>` +
-                        `<div class="model-line"><span class="lbl">Matured</span>` +
-                            `<span class="val">${stats.errorCount}</span></div>` +
-                        `<div class="model-line"><span class="lbl">Candle</span>` +
-                            `<span class="val">${fmtHM(baseSec)} → ${fmtHM(tgtSec)}</span></div>` +
-                        `</div>`
-                    );
+                // --- Standard cards ---
+                STD_ORDER.forEach(m => {
+                    const info = computeModelInfo(m, fromSec, toSec, hist5m, formattedHistory, lastPrice);
+                    if (!info) return;
+                    const color = MODEL_COLORS[m];
+                    const { sig, cls } = signalInfo(info.pd.change_pct);
+                    const err = info.stats.avgError !== null ? info.stats.avgError.toFixed(2) + '%' : '—';
+                    const dir = info.stats.dirAccuracy !== null ? info.stats.dirAccuracy.toFixed(0) + '%' : '—';
+                    cards.push(`<div class="card">
+                        <div class="card-top">
+                            <span class="model-name"><span class="dot" style="background:${color}"></span> ${labelOf(m)}</span>
+                            <span class="tag">${MODEL_TAGS[m]}</span>
+                        </div>
+                        <div class="std-price">${fmtPrice(info.pd.price)}</div>
+                        <div class="pred-row">${pctPill(info.pd.change_pct)}<span class="signal ${cls}">${sig}</span></div>
+                        ${buildSparkline(info.spark, color)}
+                        <div class="card-footer">
+                            <div class="foot-stat"><span class="fl">Err</span><span class="fv">${err}</span></div>
+                            <div class="foot-stat"><span class="fl">Hit%</span><span class="fv">${dir}</span></div>
+                            <div class="foot-stat"><span class="fl">Calls</span><span class="fv">${info.stats.errorCount}</span></div>
+                        </div>
+                    </div>`);
                 });
 
-                container.innerHTML = cards.join('');
+                grid.innerHTML = cards.join('');
             }
 
             function renderDashboard() {
                 if (!globalPayload) return;
 
-                // Newest candle across the finest available series anchors preset ranges
                 const hists = globalPayload.history || {};
                 const last5m = (hists['5m'] && hists['5m'].length)
                     ? hists['5m'][hists['5m'].length - 1].time + 300 : null;
@@ -805,8 +523,8 @@
 
                 const [rangeFromSec, rangeToSec] = rangeWindow(dataEndSec);
 
-                // Always 5-minute candles, filtered to the selected window
-                const formattedHistory = ((globalPayload.history && globalPayload.history['5m']) || [])
+                const hist5m = (globalPayload.history && globalPayload.history['5m']) || [];
+                const formattedHistory = hist5m
                     .map(item => ({ time: item.time, open: item.o, high: item.h, low: item.l, close: item.c }))
                     .filter(item => {
                         const ms = ChartUtils.toMs(item.time);
@@ -814,10 +532,8 @@
                     })
                     .sort((a, b) => a.time - b.time);
 
-                // Skip identical re-renders (the 30s poll usually returns unchanged
-                // data) - prevents series churn and scale jitter on live updates
                 const renderKey = [activeCoin, activeRange, customFromSec, customToSec,
-                                   visibleModels.join(','), globalPayload.timestamp].join('|');
+                                   visibleModels.join(','), priceLinesEnabled, globalPayload.timestamp].join('|');
                 if (chartInstance && renderKey === lastRenderKey) return;
                 lastRenderKey = renderKey;
 
@@ -827,76 +543,84 @@
                 const lastPrice = globalPayload.last_price;
                 const predictions = globalPayload.predictions;
 
-                // 1. Render metrics panels
-                document.getElementById('last-price').innerText = `$${lastPrice.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+                // Market strip: price + recent delta + note
+                document.getElementById('last-price').innerText =
+                    `$${lastPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+                const deltaEl = document.getElementById('market-delta');
+                if (formattedHistory.length >= 2) {
+                    const prev = formattedHistory[formattedHistory.length - 2].close;
+                    const cur = formattedHistory[formattedHistory.length - 1].close;
+                    const d = prev > 0 ? (cur - prev) / prev * 100 : 0;
+                    const up = d >= 0;
+                    deltaEl.innerText = `${up ? '▲' : '▼'} ${Math.abs(d).toFixed(2)}%`;
+                    deltaEl.style.color = up ? 'var(--up)' : 'var(--down)';
+                } else {
+                    deltaEl.innerText = '';
+                }
+                const meta = COIN_META[activeCoin] || { name: activeCoin };
+                document.getElementById('market-note').innerText =
+                    `${meta.name} · 5 models · updates every 30s`;
 
-                // 1b. Render per-model accuracy cards for the selected window
-                renderModelErrors(rangeFromSec, rangeToSec);
+                // Cards + legend
+                renderModelCards(rangeFromSec, rangeToSec, hist5m, formattedHistory, lastPrice);
+                renderLegend();
 
-                // 2. Initialize or Update TradingView Chart
+                // Stash data the stats drawer needs.
+                window.__statsData = { fromSec: rangeFromSec, toSec: rangeToSec, hist5m, lastPrice };
+                if (statsOpen) renderStats();
+
+                // ----- Chart -----
                 const chartContainer = document.getElementById('chart-area-target');
                 let isFirstRender = false;
-                
+
                 if (!chartInstance) {
-                    // Clear old chart elements to rebuild on resolution/coin changes
                     chartContainer.innerHTML = '';
                     isFirstRender = true;
-                    
+
                     chartInstance = LightweightCharts.createChart(chartContainer, {
                         width: chartContainer.clientWidth,
-                        height: 520,
+                        height: 430,
                         layout: {
-                            background: { color: '#0d0e12' },
-                            textColor: '#a3a5b2',
-                            fontSize: 12,
-                            fontFamily: 'Outfit, sans-serif'
+                            background: { color: 'rgba(0,0,0,0)' },
+                            textColor: '#5b6675',
+                            fontSize: 11,
+                            fontFamily: 'Sora, sans-serif'
                         },
                         grid: {
-                            vertLines: { color: 'rgba(43, 49, 67, 0.3)' },
-                            horzLines: { color: 'rgba(43, 49, 67, 0.3)' }
+                            vertLines: { color: '#16202b' },
+                            horzLines: { color: '#16202b' }
                         },
-                        crosshair: {
-                            mode: LightweightCharts.CrosshairMode.Normal
-                        },
-                        // Crosshair tooltip time -> local
-                        localization: {
-                            timeFormatter: localCrosshairLabel
-                        },
+                        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                        localization: { timeFormatter: localCrosshairLabel },
                         rightPriceScale: {
-                            borderColor: 'rgba(43, 49, 67, 0.5)',
+                            borderColor: 'rgba(255,255,255,.08)',
                             autoScale: autoScaleEnabled,
-                            // ~8% breathing room above and below the visible data
                             scaleMargins: { top: 0.08, bottom: 0.08 }
                         },
                         timeScale: {
-                            borderColor: 'rgba(43, 49, 67, 0.5)',
+                            borderColor: 'rgba(255,255,255,.08)',
                             timeVisible: true,
                             secondsVisible: false,
-                            // Axis tick labels -> local time (LWC renders UTC by default)
                             tickMarkFormatter: localTickLabel
                         }
                     });
 
-                    // Add Candlestick Series
+                    // Candlesticks: UP stays GREEN (#63ff2f) per instruction, DOWN #ff5470
                     candlestickSeries = chartInstance.addSeries(LightweightCharts.CandlestickSeries, {
-                        upColor: '#00e676',
-                        downColor: '#ff3d71',
-                        borderDownColor: '#ff3d71',
-                        borderUpColor: '#00e676',
-                        wickDownColor: '#ff3d71',
-                        wickUpColor: '#00e676'
+                        upColor: '#63ff2f',
+                        downColor: '#ff5470',
+                        borderUpColor: '#63ff2f',
+                        borderDownColor: '#ff5470',
+                        wickUpColor: '#63ff2f',
+                        wickDownColor: '#ff5470'
                     });
                 } else {
-                    // Remove previous model series to avoid duplicates and memory leaks
                     activeModelSeries.forEach(series => {
-                        try {
-                            chartInstance.removeSeries(series);
-                        } catch (e) {}
+                        try { chartInstance.removeSeries(series); } catch (e) {}
                     });
                     activeModelSeries = [];
                 }
 
-                // Candle history was built (with resolution fallback) at the top
                 if (formattedHistory.length === 0) {
                     chartContainer.innerHTML =
                         '<div class="loading-spinner">No market data available for the selected time range.</div>';
@@ -912,7 +636,6 @@
                 const lastTime = lastCandle.time;
                 const lastClose = lastCandle.close;
 
-                // Render Active Models Overlay (Continuous History + Future target)
                 visibleModels.forEach(modelName => {
                     const predData = predictions[modelName];
                     if (!predData) return;
@@ -921,27 +644,19 @@
                     const changePct = predData.change_pct;
                     const color = MODEL_COLORS[modelName];
 
-                    // v2 challenger models forecast a longer horizon (e.g. 60 min) and are
-                    // anchored to the clock-hour grid; legacy models forecast the next 5-min
-                    // candle. Pick the matching horizon, history series, and target time so
-                    // v2 dots land at the next hour boundary instead of +5 min.
                     const isV2 = modelName.endsWith('_v2');
                     const horizonMin = predData.horizon_min || 5;
                     const horizonSec = horizonMin * 60;
-                    // Backend anchors v2 to the hour: target = floor(now, 1h) + horizon.
                     const futureTime = isV2
                         ? Math.floor(lastTime / 3600) * 3600 + horizonSec
                         : lastTime + 300;
 
-                    // One line series per contiguous run of points - Lightweight Charts
-                    // connects straight across whitespace, so separate series are the
-                    // only way to render true gaps
                     const makeLineSeries = () => {
                         const s = chartInstance.addSeries(LightweightCharts.LineSeries, {
                             color: color,
                             lineWidth: 2,
                             lineStyle: LightweightCharts.LineStyle.Dashed,
-                            pointMarkersVisible: true, // lone points stay visible as dots
+                            pointMarkersVisible: true,
                             priceLineVisible: false,
                             lastValueVisible: false
                         });
@@ -949,18 +664,15 @@
                         return s;
                     };
 
-                    // v2 models live in their own hour-aligned series; legacy in the 5-min one
                     const rawPredHistory = isV2
                         ? (globalPayload.prediction_history_v2 || [])
                         : (globalPayload.prediction_history || []);
 
-                    const candleInterval = 300;                   // candles are always 5m
-                    const intervalSec = isV2 ? horizonSec : 300;  // spacing of THIS model's points
-                    const maxGapMs = 3 * intervalSec * 1000;      // break the line after 3 missed points
+                    const candleInterval = 300;
+                    const intervalSec = isV2 ? horizonSec : 300;
+                    const maxGapMs = 3 * intervalSec * 1000;
                     const toMs = ChartUtils.toMs;
 
-                    // Candle close lookup, used to discard history points that are far
-                    // from the market (garbage left over from old engine versions)
                     const closeByTime = new Map(formattedHistory.map(c => [c.time, c.close]));
                     const nearestClose = (t) => {
                         for (const dt of [0, -1, 1, -2, 2, -3, 3]) {
@@ -970,8 +682,6 @@
                         return undefined;
                     };
 
-                    // Points inside the visible window, strictly before the last candle
-                    // (the live prediction is drawn separately), sorted by time
                     const firstCandleMs = toMs(formattedHistory[0].time);
                     const lastCandleMs = toMs(lastTime);
                     let modelData = rawPredHistory.map(item => ({
@@ -982,23 +692,12 @@
                         item.time * 1000 >= firstCandleMs && item.time * 1000 < lastCandleMs
                     ).sort((a, b) => a.time - b.time);
 
-                    // 3. Sanity filter: drop points more than 5% away from the candle close
-                    //    at that time (a 15-minute-ahead prediction is never that far off)
                     modelData = ChartUtils.filterSanePoints(modelData, nearestClose, lastPrice);
 
-                    // 4. Split into contiguous segments at the gaps - missing periods
-                    //    (engine offline) render as real breaks, never diagonals
                     const segments = ChartUtils.splitAtGaps(modelData, maxGapMs);
 
-                    // 5. Live prediction: a segment anchored at the current market
-                    //    close, pointing to the target. Only drawn when the selected
-                    //    range includes the present - a past custom window has no live
-                    //    forecast, showing one would mismatch old candles with new data.
                     const showLive = rangeToSec >= dataEndSec - 1800;
                     if (showLive && isV2) {
-                        // v2: a single forecast segment from the HOUR ANCHOR (e.g. 14:00,
-                        // the candle the model used) straight to the target (15:00) - so the
-                        // line literally spans the predicted hour, not "now -> +5 min".
                         const anchorSec = Math.floor(lastTime / 3600) * 3600;
                         const anchorClose = nearestClose(anchorSec);
                         if (anchorClose !== undefined) {
@@ -1033,8 +732,6 @@
                     });
 
                     if (showLive && liveSeries) {
-                        // Long horizontal price line + axis badge at the predicted
-                        // target (toggleable - users can hide the clutter)
                         if (priceLinesEnabled) {
                             liveSeries.createPriceLine({
                                 price: predPrice,
@@ -1045,13 +742,11 @@
                                 title: labelOf(modelName)
                             });
                         }
-
-                        // Circular target marker only at the future coordinate
                         LightweightCharts.createSeriesMarkers(liveSeries, [
                             {
                                 time: futureTime,
                                 position: 'inBar',
-                                color: changePct > 0 ? '#00e676' : '#ff3d71',
+                                color: changePct > 0 ? '#63ff2f' : '#ff5470',
                                 shape: 'circle',
                                 text: `${labelOf(modelName)}`
                             }
@@ -1059,57 +754,242 @@
                     }
                 });
 
-                // Expose render state + chart instance for validation/debugging
                 window.__chartDebug = {
-                    range: activeRange,
-                    resolution: activeResolution,
-                    candles: formattedHistory.length,
-                    from: rangeFromSec,
-                    to: rangeToSec
+                    range: activeRange, resolution: activeResolution,
+                    candles: formattedHistory.length, from: rangeFromSec, to: rangeToSec
                 };
                 window.__chart = chartInstance;
 
-                // Wide ranges (2 days and up, plus ALL) are for browsing history, so
-                // they fit the entire span instead of the recent live window, and
-                // don't snap back to "now" on each 5-min update. Hourly ranges and
-                // custom keep the recent-focus live behaviour.
                 const isWideRange = activeRange === 'ALL' || (RANGES[activeRange] || 0) >= 2 * 86400;
 
                 if (autoScaleEnabled) {
-                    // ON (recent-focus live mode): Y auto-fits the VISIBLE region only,
-                    // not the whole selected period. (Manual axis dragging silently
-                    // disables the library autoScale, so re-assert it each render.)
                     chartInstance.priceScale('right').applyOptions({ autoScale: true });
                     if (isFirstRender) {
-                        // Fresh chart (range/coin change): wide ranges show the whole
-                        // span; live ranges zoom to the most recent window so recent
-                        // candles + predictions are large and readable.
-                        if (isWideRange) {
-                            chartInstance.timeScale().fitContent();
-                        } else {
-                            applyRecentFocus();
-                        }
+                        if (isWideRange) chartInstance.timeScale().fitContent();
+                        else applyRecentFocus();
                     } else if (!isWideRange) {
-                        // Live update on a live range: keep the newest candle and
-                        // prediction pinned at the right edge, preserving the zoom.
-                        // Wide ranges keep the user's current view instead.
                         chartInstance.timeScale().scrollToRealTime();
                     }
                 } else if (isFirstRender) {
-                    // OFF: one-time overview of the whole selected range, then manual control
                     chartInstance.timeScale().fitContent();
                     chartInstance.timeScale().applyOptions({ rightOffset: RIGHT_OFFSET });
                 }
-
             }
 
-            // Responsive resize — registered once (not per render) to avoid leaking listeners
+            // ---------- Statistics drawer ----------
+            function openStats() {
+                statsOpen = true;
+                document.getElementById('stats-btn').classList.add('open');
+                document.getElementById('stats-backdrop').classList.add('open');
+                document.getElementById('stats-drawer').classList.add('open');
+                renderStats();
+            }
+            function closeStats() {
+                statsOpen = false;
+                document.getElementById('stats-btn').classList.remove('open');
+                document.getElementById('stats-backdrop').classList.remove('open');
+                document.getElementById('stats-drawer').classList.remove('open');
+            }
+
+            // Direction accuracy split into n time buckets (for the "last sessions" chart).
+            function dirAccuracyByBucket(predHist, hist5m, modelName, fromSec, toSec, nBuckets) {
+                const empty = new Array(nBuckets).fill(null);
+                if (!Array.isArray(predHist) || !hist5m.length) return empty;
+                const closeAt = new Map(hist5m.map(c => [c.time + 300, c.c]));
+                const lastCandleTime = hist5m[hist5m.length - 1].time;
+                const pts = [];
+                predHist.forEach(e => {
+                    const raw = e[modelName];
+                    const pred = Number(raw);
+                    if (raw === null || raw === undefined || !Number.isFinite(pred)) return;
+                    const t = Number(e.time);
+                    if (!Number.isFinite(t) || t >= lastCandleTime || t < fromSec || t > toSec) return;
+                    const actual = closeAt.get(t + 300);
+                    const base = closeAt.get(t);
+                    if (actual === undefined || actual <= 0 || base === undefined || base <= 0) return;
+                    const pm = pred - base, am = actual - base;
+                    if (pm === 0 || am === 0) return;
+                    pts.push({ t, hit: (pm > 0) === (am > 0) });
+                });
+                if (pts.length === 0) return empty;
+                pts.sort((a, b) => a.t - b.t);
+                const tmin = pts[0].t, tmax = pts[pts.length - 1].t;
+                const span = (tmax - tmin) || 1;
+                const hits = new Array(nBuckets).fill(0), tot = new Array(nBuckets).fill(0);
+                pts.forEach(p => {
+                    let idx = Math.floor((p.t - tmin) / span * nBuckets);
+                    if (idx >= nBuckets) idx = nBuckets - 1;
+                    if (idx < 0) idx = 0;
+                    tot[idx]++; if (p.hit) hits[idx]++;
+                });
+                return tot.map((n, i) => n > 0 ? hits[i] / n * 100 : null);
+            }
+
+            function buildSessionChart(series) {
+                const w = 460, h = 180, padL = 32, padR = 12, padT = 14, padB = 26;
+                const all = [];
+                series.forEach(s => s.data.forEach(v => { if (v !== null) all.push(v); }));
+                if (all.length === 0) {
+                    return `<div class="session-chart"><div style="text-align:center;color:var(--muted);padding:60px 0;font-size:12px">Not enough matured calls yet</div></div>`;
+                }
+                let lo = Math.floor(Math.min(...all) - 3), hi = Math.ceil(Math.max(...all) + 3);
+                lo = Math.max(0, lo); if (hi - lo < 8) hi = lo + 8;
+                const n = series[0].data.length;
+                const xOf = i => padL + (i / (n - 1)) * (w - padL - padR);
+                const yOf = v => padT + (1 - (v - lo) / (hi - lo)) * (h - padT - padB);
+                const ticks = [lo, Math.round((lo + hi) / 2), hi];
+                let svg = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto">`;
+                ticks.forEach(tk => {
+                    const y = yOf(tk);
+                    svg += `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="#16202b" stroke-width="1"/>`;
+                    svg += `<text x="${padL - 6}" y="${y + 3}" text-anchor="end" fill="#5b6675" font-size="9" font-family="Sora">${tk}%</text>`;
+                });
+                // x labels: -(n-1) .. now
+                for (let i = 0; i < n; i++) {
+                    const lbl = i === n - 1 ? 'now' : `-${n - 1 - i}`;
+                    svg += `<text x="${xOf(i)}" y="${h - 8}" text-anchor="middle" fill="#5b6675" font-size="9" font-family="Sora">${lbl}</text>`;
+                }
+                series.forEach(s => {
+                    // draw contiguous segments (skip nulls)
+                    let d = '', started = false;
+                    s.data.forEach((v, i) => {
+                        if (v === null) { started = false; return; }
+                        d += `${started ? 'L' : 'M'}${xOf(i).toFixed(1)} ${yOf(v).toFixed(1)} `;
+                        started = true;
+                    });
+                    svg += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+                    s.data.forEach((v, i) => {
+                        if (v === null) return;
+                        svg += `<circle cx="${xOf(i).toFixed(1)}" cy="${yOf(v).toFixed(1)}" r="2.5" fill="${s.color}"/>`;
+                    });
+                });
+                svg += `</svg>`;
+                const legend = series.map(s =>
+                    `<span><i style="background:${s.color}"></i>${s.name}</span>`).join('');
+                return `<div class="session-chart">${svg}<div class="session-legend">${legend}</div></div>`;
+            }
+
+            function renderStats() {
+                if (!globalPayload || !window.__statsData) return;
+                const { fromSec, toSec, hist5m, lastPrice } = window.__statsData;
+                const predHist = globalPayload.prediction_history || [];
+                const predHistV2 = globalPayload.prediction_history_v2 || [];
+
+                // Per-model stats
+                const info = {};
+                LEGEND_ORDER.forEach(m => {
+                    const isV2 = m.endsWith('_v2');
+                    const hist = isV2 ? predHistV2 : predHist;
+                    info[m] = ChartUtils.computeModelStats(hist, hist5m, m, { fromSec, toSec, lastN: 200 });
+                });
+
+                // Aggregates
+                let totMatured = 0, totCorrect = 0, totDirCount = 0, errWeightSum = 0, errCountSum = 0;
+                let best = null, bestDir = -1, maxErr = 0;
+                LEGEND_ORDER.forEach(m => {
+                    const s = info[m];
+                    totMatured += s.errorCount;
+                    if (s.dirAccuracy !== null) {
+                        totCorrect += Math.round(s.dirAccuracy / 100 * s.errorCount);
+                        totDirCount += s.errorCount;
+                        if (s.dirAccuracy > bestDir) { bestDir = s.dirAccuracy; best = m; }
+                    }
+                    if (s.avgError !== null) {
+                        errWeightSum += s.avgError * s.errorCount;
+                        errCountSum += s.errorCount;
+                        if (s.avgError > maxErr) maxErr = s.avgError;
+                    }
+                });
+                const overallDir = totDirCount > 0 ? (totCorrect / totDirCount * 100) : null;
+                const overallErr = errCountSum > 0 ? (errWeightSum / errCountSum) : null;
+
+                // Tiles
+                const tiles = `<div class="stats-tiles">
+                    <div class="stat-tile">
+                        <div class="st-label">Direction accuracy</div>
+                        <div class="st-big accent">${overallDir !== null ? overallDir.toFixed(0) + '%' : '—'}</div>
+                        <div class="st-sub">of calls correctly predicted</div>
+                    </div>
+                    <div class="stat-tile">
+                        <div class="st-label">Avg error</div>
+                        <div class="st-big">${overallErr !== null ? overallErr.toFixed(2) + '%' : '—'}</div>
+                    </div>
+                    <div class="stat-tile">
+                        <div class="st-label">Best model</div>
+                        <div class="st-big accent">${best ? labelOf(best) : '—'}</div>
+                    </div>
+                    <div class="stat-tile">
+                        <div class="st-label">Predictions matured</div>
+                        <div class="st-big">${totMatured}</div>
+                    </div>
+                </div>`;
+
+                // 7-session line chart for the three base/legacy models
+                const sessModels = ['ARIMA', 'LSTM', 'Transformer'];
+                const series = sessModels.map(m => ({
+                    name: labelOf(m),
+                    color: MODEL_COLORS[m],
+                    data: dirAccuracyByBucket(predHist, hist5m, m, fromSec, toSec, 7)
+                }));
+                const sessionChart = `<div class="stats-section">
+                    <h3>Calls predicted correctly · last 7 sessions</h3>
+                    ${buildSessionChart(series)}
+                </div>`;
+
+                // Hit-ratio bars (all models)
+                const hitRows = LEGEND_ORDER.map(m => {
+                    const s = info[m];
+                    const color = MODEL_COLORS[m];
+                    const pct = s.dirAccuracy;
+                    const correct = pct !== null ? Math.round(pct / 100 * s.errorCount) : 0;
+                    const w = pct !== null ? Math.max(0, Math.min(100, pct)) : 0;
+                    return `<div class="hit-row">
+                        <div class="hit-top">
+                            <span class="hit-name"><span class="dot" style="background:${color}"></span>${labelOf(m)}</span>
+                            <span class="hit-pct" style="color:${color}">${pct !== null ? pct.toFixed(0) + '%' : '—'}</span>
+                        </div>
+                        <div class="hit-bar">
+                            <div class="fill" style="width:${w}%;background:${color}"></div>
+                            <div class="mid"></div>
+                        </div>
+                        <div class="hit-cap">${correct} of ${s.errorCount} completed calls predicted correctly</div>
+                    </div>`;
+                }).join('');
+                const hitSection = `<div class="stats-section">
+                    <h3>Who predicted the move correctly?</h3>
+                    <p class="sub">Of each model's completed predictions, how many times it correctly called up or down. The midpoint marks 50% (coin-flip baseline).</p>
+                    ${hitRows}
+                </div>`;
+
+                // Avg error bars (lower = better)
+                const errBars = LEGEND_ORDER.map(m => {
+                    const s = info[m];
+                    const color = MODEL_COLORS[m];
+                    const e = s.avgError;
+                    const w = (e !== null && maxErr > 0) ? Math.min(100, e / maxErr * 100) : 0;
+                    return `<div class="err-row">
+                        <span class="en">${labelOf(m)}</span>
+                        <div class="eb"><div class="fill" style="width:${w}%;background:${color}"></div></div>
+                        <span class="ev">${e !== null ? e.toFixed(2) + '%' : '—'}</span>
+                    </div>`;
+                }).join('');
+                const errSection = `<div class="stats-section">
+                    <h3>Average price error by model</h3>
+                    <p class="sub">lower is better</p>
+                    ${errBars}
+                </div>`;
+
+                document.getElementById('stats-body').innerHTML =
+                    tiles + sessionChart + hitSection + errSection;
+            }
+
             window.addEventListener('resize', () => {
                 if (chartInstance) {
                     const chartContainer = document.getElementById('chart-area-target');
-                    chartInstance.resize(chartContainer.clientWidth, 520);
+                    chartInstance.resize(chartContainer.clientWidth, 430);
                 }
             });
+            window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && statsOpen) closeStats(); });
 
             window.switchCoin = switchCoin;
             window.setRange = setRange;
@@ -1117,6 +997,8 @@
             window.toggleModel = toggleModel;
             window.toggleAutoScale = toggleAutoScale;
             window.togglePriceLines = togglePriceLines;
+            window.openStats = openStats;
+            window.closeStats = closeStats;
 
             updateAutoScaleButton();
             updatePriceLinesButton();
