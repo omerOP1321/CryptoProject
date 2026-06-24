@@ -180,10 +180,9 @@
         };
         const labelOf = m => MODEL_LABELS[m] || m;
 
-        // Card / legend ordering: leading (ARIMA) is rendered separately.
-        const STD_ORDER = ['LSTM', 'Transformer', 'LSTM_v2', 'Transformer_v2'];
+        // Card / legend ordering. The leading model is chosen dynamically at render time.
+        const ALL_MODELS = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
         const LEGEND_ORDER = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
-        const LEADING = 'ARIMA';
 
         const COIN_META = {
             'BTCUSDT': { name: 'Bitcoin', sym: 'BTC' },
@@ -456,11 +455,32 @@
                 return { pd, stats, isV2, spark: vals };
             }
 
+            // Pick the model with the highest directional accuracy among those that have
+            // at least 5 matured calls. Falls back to ARIMA if none qualify.
+            function pickLeadingModel(fromSec, toSec, hist5m) {
+                const preds = globalPayload.predictions || {};
+                let bestModel = 'ARIMA', bestDir = -1;
+                ALL_MODELS.forEach(m => {
+                    if (!preds[m]) return;
+                    const isV2 = m.endsWith('_v2');
+                    const hist = isV2 ? (globalPayload.prediction_history_v2 || [])
+                                     : (globalPayload.prediction_history || []);
+                    const stats = ChartUtils.computeModelStats(hist, hist5m, m,
+                        { fromSec, toSec, lastN: 200 });
+                    if (stats.dirCount >= 5 && stats.dirAccuracy > bestDir) {
+                        bestDir = stats.dirAccuracy;
+                        bestModel = m;
+                    }
+                });
+                return bestModel;
+            }
+
             function renderModelCards(fromSec, toSec, hist5m, formattedHistory, lastPrice) {
                 const grid = document.getElementById('model-grid');
                 const cards = [];
 
-                // --- Leading card (ARIMA) ---
+                // --- Leading card (dynamic: best directional accuracy) ---
+                const LEADING = pickLeadingModel(fromSec, toSec, hist5m);
                 const lead = computeModelInfo(LEADING, fromSec, toSec, hist5m, formattedHistory, lastPrice);
                 if (lead) {
                     const color = MODEL_COLORS[LEADING];
@@ -484,8 +504,8 @@
                     </div>`);
                 }
 
-                // --- Standard cards ---
-                STD_ORDER.forEach(m => {
+                // --- Standard cards (all models except the current leader) ---
+                ALL_MODELS.filter(m => m !== LEADING).forEach(m => {
                     const info = computeModelInfo(m, fromSec, toSec, hist5m, formattedHistory, lastPrice);
                     if (!info) return;
                     const color = MODEL_COLORS[m];

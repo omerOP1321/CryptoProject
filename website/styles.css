@@ -535,15 +535,27 @@ header {
 }
 
 /* ---------- Footer links + credits (shared by all pages) ---------- */
-.footer a,
+.footer a { color: var(--buy); text-decoration: none; font-weight: 600; transition: color .2s ease; }
+.footer a:hover { color: #5cb2ff; }
+
 .about-link {
-    color: var(--buy);
-    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--card-border);
+    background: rgba(255, 255, 255, .04);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 12px;
     font-weight: 600;
-    transition: color .2s ease;
+    padding: 7px 13px;
+    border-radius: 9px;
+    text-decoration: none;
+    transition: all .2s ease;
 }
-.footer a:hover,
-.about-link:hover { color: #5cb2ff; }
+.about-link:hover {
+    color: var(--text);
+    background: rgba(255, 255, 255, .08);
+}
 
 .credits {
     text-align: center;
