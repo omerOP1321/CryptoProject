@@ -373,14 +373,7 @@
             <div class="controls-panel">
                 <div class="control-group">
                     <span class="control-label">Range:</span>
-                    <button class="btn" data-range="1H" onclick="setRange('1H', this)">1H</button>
-                    <button class="btn" data-range="6H" onclick="setRange('6H', this)">6H</button>
-                    <button class="btn" data-range="12H" onclick="setRange('12H', this)">12H</button>
-                    <button class="btn active" data-range="24H" onclick="setRange('24H', this)">24H</button>
-                    <button class="btn" data-range="7D" onclick="setRange('7D', this)">7D</button>
-                    <button class="btn" data-range="30D" onclick="setRange('30D', this)">30D</button>
-                    <button class="btn" data-range="90D" onclick="setRange('90D', this)">90D</button>
-                    <button class="btn" data-range="1Y" onclick="setRange('1Y', this)">1Y</button>
+                    <select id="range-select" class="btn" onchange="setRange(this.value)"></select>
                     <button class="btn" data-range="ALL" onclick="setRange('ALL', this)">ALL</button>
                     <button class="btn" data-range="custom" onclick="setRange('custom', this)">Custom</button>
                 </div>
@@ -453,14 +446,17 @@
         let visibleModels = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
 
         // Time range selection. All ranges render 5-minute candles. The backend now
-        // retains the FULL prediction history and the 5m candles behind it, so the
-        // presets reach far past 7D, and 'ALL' shows everything ever recorded.
+        // retains the FULL prediction history and the 5m candles behind it.
+        // The dropdown holds hourly presets + every day from 2D to 30D; ALL and
+        // Custom live outside it as their own buttons. Built programmatically so the
+        // <select> options and the window math never drift apart.
         const ALL_SPAN = 100 * 365 * 86400;   // effectively unbounded -> earliest data
-        const RANGES = {
-            '1H': 3600, '6H': 6 * 3600, '12H': 12 * 3600,
-            '24H': 24 * 3600, '7D': 7 * 86400, '30D': 30 * 86400,
-            '90D': 90 * 86400, '1Y': 365 * 86400, 'ALL': ALL_SPAN
-        };
+        const RANGES = { '1H': 3600, '6H': 6 * 3600, '12H': 12 * 3600, '24H': 24 * 3600 };
+        for (let d = 2; d <= 30; d++) RANGES[d + 'D'] = d * 86400;
+        RANGES['ALL'] = ALL_SPAN;
+        // Labels shown in the dropdown (the user's requested wording).
+        const RANGE_LABELS = { '1H': 'שעה', '6H': '6 שעות', '12H': '12 שעות', '24H': '24 שעות' };
+        for (let d = 2; d <= 30; d++) RANGE_LABELS[d + 'D'] = d + ' ימים';
         let activeRange = localStorage.getItem('activeRange') || '24H';
         if (!RANGES[activeRange] && activeRange !== 'custom') activeRange = '24H';
         let customFromSec = null;
@@ -603,7 +599,28 @@
                 return [endSec - span, endSec];
             }
 
+            // Fill the range <select> with the hourly + 2D..30D presets (ALL/Custom
+            // stay as buttons). A blank placeholder lets the dropdown show "no preset"
+            // while ALL/Custom is active, AND ensures re-picking the displayed preset
+            // still fires onchange.
+            function populateRangeSelect() {
+                const sel = document.getElementById('range-select');
+                if (!sel) return;
+                sel.innerHTML = '<option value="" hidden>—</option>' +
+                    Object.keys(RANGES).filter(k => k !== 'ALL')
+                        .map(k => `<option value="${k}">${RANGE_LABELS[k] || k}</option>`)
+                        .join('');
+            }
+
             function updateRangeButtons() {
+                const sel = document.getElementById('range-select');
+                // A dropdown preset is active when activeRange is a known range that
+                // isn't ALL (ALL and custom are the outside-the-dropdown buttons).
+                const inDropdown = RANGES[activeRange] !== undefined && activeRange !== 'ALL';
+                if (sel) {
+                    sel.value = inDropdown ? activeRange : '';
+                    sel.classList.toggle('active', inDropdown);
+                }
                 document.querySelectorAll('.btn[data-range]').forEach(b =>
                     b.classList.toggle('active', b.dataset.range === activeRange));
                 document.getElementById('custom-range-inputs').style.display =
@@ -1051,10 +1068,11 @@
                 };
                 window.__chart = chartInstance;
 
-                // Wide ranges (30D and up) are for browsing the full prediction
-                // history, so they fit the entire span instead of the recent live
-                // window, and don't snap back to "now" on each 5-min update.
-                const isWideRange = ['30D', '90D', '1Y', 'ALL'].includes(activeRange);
+                // Wide ranges (2 days and up, plus ALL) are for browsing history, so
+                // they fit the entire span instead of the recent live window, and
+                // don't snap back to "now" on each 5-min update. Hourly ranges and
+                // custom keep the recent-focus live behaviour.
+                const isWideRange = activeRange === 'ALL' || (RANGES[activeRange] || 0) >= 2 * 86400;
 
                 if (autoScaleEnabled) {
                     // ON (recent-focus live mode): Y auto-fits the VISIBLE region only,
@@ -1101,6 +1119,7 @@
 
             updateAutoScaleButton();
             updatePriceLinesButton();
+            populateRangeSelect();
             updateRangeButtons();
             fetchPredictions();
             setInterval(fetchPredictions, 30000);
