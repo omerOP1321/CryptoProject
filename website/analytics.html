@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Analytics · Crypto AI Prediction</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="chart-utils.js?v=4"></script>
+    <script src="analytics-ui.js?v=4"></script>
+    <link rel="stylesheet" href="styles.css?v=4">
+</head>
+<body>
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+
+    <div class="page">
+        <header>
+            <div class="brand">
+                <div class="logo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" fill="#fff"/>
+                    </svg>
+                </div>
+                <div class="title">Model Analytics</div>
+            </div>
+            <a href="index.html" class="back-link">‹ Back to dashboard</a>
+        </header>
+
+        <div class="subbar">
+            <div class="coin-tabs" id="coin-tabs">
+                <button class="coin-tab active" data-id="1" data-sym="BTC" data-name="Bitcoin"><b>BTC</b><span>Bitcoin</span></button>
+                <button class="coin-tab" data-id="2" data-sym="ETH" data-name="Ethereum"><b>ETH</b><span>Ethereum</span></button>
+                <button class="coin-tab" data-id="3" data-sym="XRP" data-name="Ripple"><b>XRP</b><span>Ripple</span></button>
+            </div>
+            <div class="market-note" id="coin-note">All models · click a row for full detail</div>
+        </div>
+
+        <div id="loading" class="loading-spinner">Connecting to Supabase…</div>
+
+        <div id="content" style="display:none;">
+            <div class="section-title">Model comparison</div>
+            <p class="section-sub">Every metric is computed from matured predictions. Lower is better for MAE / RMSE / MASE / PT p-value; higher is better for everything else. Click a row to open that model's full history &amp; analytics. <strong>50% directional accuracy = coin flip; MASE ≥ 1 = no better than a naive no-change forecast.</strong></p>
+            <div class="cmp-wrap"><table class="cmp-table" id="cmp-table"></table></div>
+
+            <div class="section-title">Rolling directional accuracy</div>
+            <p class="section-sub">Hit-rate over time, split into 12 equal periods. The dashed line marks the 50% coin-flip baseline.</p>
+            <div class="legend-chips" id="legend-rolling"></div>
+            <div class="a-card" id="chart-rolling"></div>
+
+            <div class="section-title">Strategy equity curves</div>
+            <p class="section-sub">Compounded return of a long/short strategy that follows each model's predicted direction. Break-even = 1.00×.</p>
+            <div class="legend-chips" id="legend-equity"></div>
+            <div class="a-card" id="chart-equity"></div>
+
+            <div class="section-title">Model focus
+                <select class="ana-select" id="focus-select" style="margin-left:10px;"></select>
+            </div>
+            <p class="section-sub">Predicted-vs-actual and residual distribution for one model. Hover any point for details.</p>
+            <div class="a-grid2">
+                <div class="a-card"><div class="a-card-title">Predicted vs actual</div><div id="focus-scatter"></div></div>
+                <div class="a-card"><div class="a-card-title">Residual distribution (pred − actual)</div><div id="focus-resid"></div></div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <span>Analytics are computed client-side from the live Supabase payload. Legacy models target +5 min; v2 challengers +60 min.</span>
+            <span><a href="index.html" class="about-link">Dashboard</a> <a href="about.html" class="about-link">About</a></span>
+        </div>
+        <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
+    </div>
+
+    <script src="analytics-page.js?v=4"></script>
+</body>
+</html>

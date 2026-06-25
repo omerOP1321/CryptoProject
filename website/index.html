@@ -7,8 +7,9 @@
     <!-- TradingView Lightweight Charts standalone production CDN -->
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="chart-utils.js"></script>
-    <link rel="stylesheet" href="styles.css">
+    <script src="chart-utils.js?v=4"></script>
+    <script src="analytics-ui.js?v=4"></script>
+    <link rel="stylesheet" href="styles.css?v=4">
 </head>
 <body>
     <div class="blob b1"></div>
@@ -101,7 +102,7 @@
 
             <div class="footer">
                 <span>Legacy models target +5 min · v2 challengers target +60 min (anchored to clock hour). Hover the chart for OHLC.</span>
-                <span><a href="about.html" class="about-link">About</a> · Powered by Supabase &amp; TradingView</span>
+                <span><a href="analytics.html" class="about-link">Analytics</a> <a href="about.html" class="about-link">About</a> · Powered by Supabase &amp; TradingView</span>
             </div>
             <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
         </div>
@@ -487,7 +488,7 @@
                     const { sig, cls } = signalInfo(lead.pd.change_pct);
                     const err = lead.stats.avgError !== null ? lead.stats.avgError.toFixed(2) + '% err' : '—';
                     const dir = lead.stats.dirAccuracy !== null ? lead.stats.dirAccuracy.toFixed(0) + '%' : '—';
-                    cards.push(`<div class="card leading">
+                    cards.push(`<div class="card leading" onclick="openModelDetail('${LEADING}')" title="Click for full prediction history & analytics">
                         <div class="ring">${buildRing(lead.stats.dirAccuracy, color)}</div>
                         <div class="card-top">
                             <span class="lead-badge">★ LEADING MODEL</span>
@@ -501,6 +502,7 @@
                             <div class="foot-stat"><span class="fl">Calls Correct</span><span class="fv accent">${dir}</span></div>
                             <div class="foot-stat"><span class="fl">Calls Made</span><span class="fv">${lead.stats.errorCount}</span></div>
                         </div>
+                        <span class="open-hint">History ›</span>
                     </div>`);
                 }
 
@@ -512,7 +514,7 @@
                     const { sig, cls } = signalInfo(info.pd.change_pct);
                     const err = info.stats.avgError !== null ? info.stats.avgError.toFixed(2) + '%' : '—';
                     const dir = info.stats.dirAccuracy !== null ? info.stats.dirAccuracy.toFixed(0) + '%' : '—';
-                    cards.push(`<div class="card">
+                    cards.push(`<div class="card" onclick="openModelDetail('${m}')" title="Click for full prediction history & analytics">
                         <div class="card-top">
                             <span class="model-name"><span class="dot" style="background:${color}"></span> ${labelOf(m)}</span>
                             <span class="tag">${MODEL_TAGS[m]}</span>
@@ -525,6 +527,7 @@
                             <div class="foot-stat"><span class="fl">Hit%</span><span class="fv">${dir}</span></div>
                             <div class="foot-stat"><span class="fl">Calls</span><span class="fv">${info.stats.errorCount}</span></div>
                         </div>
+                        <span class="open-hint">History ›</span>
                     </div>`);
                 });
 
@@ -1023,6 +1026,14 @@
             });
             window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && statsOpen) closeStats(); });
 
+            // Open the per-model history/analytics modal from a card click.
+            // Snapshots the current payload so the open modal stays stable across polls.
+            function openModelDetail(modelName) {
+                if (globalPayload && window.AnalyticsUI) {
+                    window.AnalyticsUI.openModelModal(modelName, globalPayload);
+                }
+            }
+
             window.switchCoin = switchCoin;
             window.setRange = setRange;
             window.applyCustomRange = applyCustomRange;
@@ -1031,6 +1042,7 @@
             window.togglePriceLines = togglePriceLines;
             window.openStats = openStats;
             window.closeStats = closeStats;
+            window.openModelDetail = openModelDetail;
 
             updateAutoScaleButton();
             updatePriceLinesButton();

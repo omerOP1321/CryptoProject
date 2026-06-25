@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const ChartUtils = require('../chart-utils.js');
 
 const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors, computeModelStats, splitAtGaps, recentFocusRange } = ChartUtils;
+const { buildPredictionLog, regressionMetrics, classificationMetrics, pesaranTimmermann, rollingMetrics, regimeBreakdown, tradingSim } = ChartUtils;
 
 // ----------------------------------------------------- recentFocusRange
 
@@ -304,4 +305,178 @@ test('computeModelStats: empty inputs return null metrics', () => {
     assert.deepStrictEqual(
         computeModelStats([{ time: 900, LSTM: 105 }], [], 'LSTM'),
         { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 });
+});
+
+// =================================================== EVALUATION METRICS
+
+// closeAt keys: 300->100, 600->102, 900->104, 1200->106, 1500->108
+// lastCandleTime = 1200, so predictions at t < 1200 are matured.
+const evalCandles = [
+    { time: 0,    c: 100 },
+    { time: 300,  c: 102 },
+    { time: 600,  c: 104 },
+    { time: 900,  c: 106 },
+    { time: 1200, c: 108 },
+];
+
+// -------------------------------------------------- buildPredictionLog
+
+test('buildPredictionLog returns matured records newest-first with directions', () => {
+    // t=300: actual closeAt[600]=102, baseline closeAt[300]=100, pred 103 -> UP/UP hit
+    // t=600: actual closeAt[900]=104, baseline closeAt[600]=102, pred 101 -> DOWN/UP miss
+    const log = buildPredictionLog([
+        { time: 300, M: 103 },
+        { time: 600, M: 101 },
+    ], evalCandles, 'M');
+    assert.strictEqual(log.length, 2);
+    assert.strictEqual(log[0].time, 600);              // newest first
+    assert.strictEqual(log[0].actual, 104);
+    assert.strictEqual(log[0].baseline, 102);
+    assert.strictEqual(log[0].predDir, 'DOWN');
+    assert.strictEqual(log[0].actDir, 'UP');
+    assert.strictEqual(log[0].correct, false);
+    assert.ok(Math.abs(log[0].errAbs - 3) < 1e-9);     // |101-104|
+    assert.strictEqual(log[1].time, 300);
+    assert.strictEqual(log[1].correct, true);
+    assert.ok(Math.abs(log[1].errAbs - 1) < 1e-9);     // |103-102|
+});
+
+test('buildPredictionLog excludes the in-progress and future targets', () => {
+    const log = buildPredictionLog([
+        { time: 1200, M: 109 },   // == lastCandleTime -> in progress
+        { time: 99999, M: 500 },  // future
+        { time: 600, M: 105 },    // matured
+    ], evalCandles, 'M');
+    assert.strictEqual(log.length, 1);
+    assert.strictEqual(log[0].time, 600);
+});
+
+test('buildPredictionLog FLAT move leaves correct null', () => {
+    // need a candle at t-300 so baseline closeAt[600] exists; all closes equal -> flat move
+    const flat = [{ time: 300, c: 100 }, { time: 600, c: 100 }, { time: 900, c: 100 }, { time: 1200, c: 100 }];
+    // t=600: actual closeAt[900]=100, baseline closeAt[600]=100 -> actDir FLAT
+    const log = buildPredictionLog([{ time: 600, M: 101 }], flat, 'M');
+    assert.strictEqual(log.length, 1);
+    assert.strictEqual(log[0].actDir, 'FLAT');
+    assert.strictEqual(log[0].correct, null);
+});
+
+// --------------------------------------------------- regressionMetrics
+
+test('regressionMetrics computes mae/rmse/mape/r2/mase/bias', () => {
+    const log = [
+        { predicted: 11, actual: 10, baseline: 9 },
+        { predicted: 19, actual: 20, baseline: 19 },
+        { predicted: 31, actual: 30, baseline: 29 },
+    ];
+    const m = regressionMetrics(log);
+    assert.strictEqual(m.n, 3);
+    assert.ok(Math.abs(m.mae - 1) < 1e-9);
+    assert.ok(Math.abs(m.rmse - 1) < 1e-9);
+    assert.ok(Math.abs(m.mase - 1) < 1e-9);          // naive MAE = 1 -> mase 1
+    assert.ok(Math.abs(m.bias - 1 / 3) < 1e-9);
+    assert.ok(Math.abs(m.r2 - 0.985) < 1e-9);        // 1 - 3/200
+    assert.ok(Math.abs(m.mape - 6.111111111) < 1e-6);
+});
+
+test('regressionMetrics returns nulls for empty input', () => {
+    assert.deepStrictEqual(regressionMetrics([]),
+        { mae: null, rmse: null, mape: null, r2: null, mase: null, bias: null, n: 0 });
+});
+
+// ----------------------------------------------- classificationMetrics
+
+test('classificationMetrics builds confusion matrix (UP = positive)', () => {
+    const log = [
+        { predDir: 'UP', actDir: 'UP' },     // TP
+        { predDir: 'UP', actDir: 'UP' },     // TP
+        { predDir: 'UP', actDir: 'DOWN' },   // FP
+        { predDir: 'DOWN', actDir: 'UP' },   // FN
+        { predDir: 'DOWN', actDir: 'DOWN' }, // TN
+        { predDir: 'FLAT', actDir: 'UP' },   // ignored
+    ];
+    const c = classificationMetrics(log);
+    assert.deepStrictEqual([c.tp, c.fp, c.fn, c.tn, c.n], [2, 1, 1, 1, 5]);
+    assert.ok(Math.abs(c.precision - 2 / 3) < 1e-9);
+    assert.ok(Math.abs(c.recall - 2 / 3) < 1e-9);
+    assert.ok(Math.abs(c.f1 - 2 / 3) < 1e-9);
+    assert.ok(Math.abs(c.accuracy - 0.6) < 1e-9);
+});
+
+// ------------------------------------------------- pesaranTimmermann
+
+test('pesaranTimmermann flags significant directional skill', () => {
+    // 10 perfectly-correct calls (6 UP, 4 DOWN): P=1, P*=0.52, stat=10/3
+    const log = [];
+    for (let i = 0; i < 6; i++) log.push({ predDir: 'UP', actDir: 'UP' });
+    for (let i = 0; i < 4; i++) log.push({ predDir: 'DOWN', actDir: 'DOWN' });
+    const pt = pesaranTimmermann(log);
+    assert.strictEqual(pt.n, 10);
+    assert.ok(Math.abs(pt.stat - 10 / 3) < 1e-6);
+    assert.ok(pt.pValue < 0.05);
+    assert.strictEqual(pt.significant, true);
+    assert.ok(Math.abs(pt.accuracy - 100) < 1e-9);
+});
+
+test('pesaranTimmermann needs a minimum sample', () => {
+    const pt = pesaranTimmermann([{ predDir: 'UP', actDir: 'UP' }]);
+    assert.strictEqual(pt.stat, null);
+    assert.strictEqual(pt.significant, false);
+});
+
+// ---------------------------------------------------- rollingMetrics
+
+test('rollingMetrics buckets a log into time slices', () => {
+    const log = [
+        { time: 0,    errAbs: 2, correct: true },
+        { time: 100,  errAbs: 4, correct: false },
+        { time: 1000, errAbs: 1, correct: true },
+        { time: 1100, errAbs: 3, correct: true },
+    ];
+    const r = rollingMetrics(log, 2);
+    assert.deepStrictEqual(r[0], { dirAcc: 50, mae: 3, n: 2 });
+    assert.deepStrictEqual(r[1], { dirAcc: 100, mae: 2, n: 2 });
+});
+
+// --------------------------------------------------- regimeBreakdown
+
+test('regimeBreakdown classifies trend up/down by lookback', () => {
+    const hist = [
+        { time: 0,    c: 100 },
+        { time: 300,  c: 100 },
+        { time: 600,  c: 110 },  // idx2: vs idx0 100 -> +10% UP
+        { time: 900,  c: 110 },
+        { time: 1200, c: 99 },   // idx4: vs idx2 110 -> -10% DOWN
+        { time: 1500, c: 99 },
+    ];
+    const log = [
+        { time: 1200, errAbs: 5, correct: false },
+        { time: 600,  errAbs: 1, correct: true },
+    ];
+    const rb = regimeBreakdown(log, hist, { trendLookback: 2, volWindow: 2, trendThreshold: 0.1 });
+    assert.deepStrictEqual(rb.trend.UP, { dirAcc: 100, mae: 1, n: 1 });
+    assert.deepStrictEqual(rb.trend.DOWN, { dirAcc: 0, mae: 5, n: 1 });
+    assert.strictEqual(rb.trend.SIDEWAYS.n, 0);
+});
+
+// ------------------------------------------------------- tradingSim
+
+test('tradingSim simulates a directional strategy', () => {
+    const log = [
+        { time: 0,   baseline: 100, actual: 101, predDir: 'UP' },   // +1%
+        { time: 300, baseline: 100, actual: 99,  predDir: 'UP' },   // -1%
+    ];
+    const s = tradingSim(log, { fee: 0, barSec: 300 });
+    assert.strictEqual(s.trades, 2);
+    assert.strictEqual(s.sharpe, 0);                 // mean return 0
+    assert.ok(Math.abs(s.profitFactor - 1) < 1e-9);
+    assert.ok(Math.abs(s.winRate - 50) < 1e-9);
+    assert.ok(Math.abs(s.cumReturn - -0.01) < 1e-6); // 1.01*0.99 = 0.9999
+    assert.ok(Math.abs(s.maxDrawdown - 1.0) < 1e-3);
+});
+
+test('tradingSim takes no position on FLAT predictions', () => {
+    const s = tradingSim([{ time: 0, baseline: 100, actual: 101, predDir: 'FLAT' }]);
+    assert.strictEqual(s.trades, 0);
+    assert.strictEqual(s.cumReturn, null);
 });
