@@ -962,3 +962,146 @@ header {
 @media (max-width: 400px) {
     .m-tiles, .m-tiles.four { grid-template-columns: 1fr; }
 }
+
+/* ==========================================================================
+   AUTH — header control, modal, About editor
+   ========================================================================== */
+header { gap: 12px; }
+.brand { margin-right: auto; }   /* push live-chip + auth control to the right */
+
+.auth-area { display: flex; align-items: center; gap: 8px; }
+.auth-btn {
+    font-family: inherit; font-size: 12px; font-weight: 600;
+    padding: 8px 14px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--card-border); background: rgba(255, 255, 255, .05);
+    color: var(--text); transition: background .2s ease, border-color .2s ease;
+}
+.auth-btn:hover { background: rgba(255, 255, 255, .1); }
+.auth-btn.primary { background: linear-gradient(135deg, #2f9dff, #3b9eff); border-color: transparent; color: #fff; }
+.auth-user { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.auth-name { font-weight: 600; }
+.auth-role {
+    font-size: 9px; font-weight: 700; letter-spacing: .08em;
+    padding: 2px 7px; border-radius: 6px; color: #1a1205;
+    background: linear-gradient(135deg, #f5d142, #f5a524);
+}
+
+.auth-modal-backdrop {
+    position: fixed; inset: 0; z-index: 90;
+    background: rgba(4, 6, 10, .66); backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+    opacity: 0; visibility: hidden; transition: opacity .25s ease, visibility .25s;
+}
+.auth-modal-backdrop.open { opacity: 1; visibility: visible; }
+.auth-modal {
+    width: 380px; max-width: 100%;
+    background: #0a0e14; border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 16px; padding: 8px 22px 22px;
+    transform: translateY(10px); transition: transform .25s cubic-bezier(.22, 1, .36, 1);
+}
+.auth-modal-backdrop.open .auth-modal { transform: translateY(0); }
+.auth-tabs { display: flex; align-items: center; gap: 6px; margin: 6px 0 16px; position: relative; }
+.auth-tab {
+    border: none; background: transparent; color: var(--muted); cursor: pointer;
+    font-family: inherit; font-size: 14px; font-weight: 600; padding: 8px 4px;
+    border-bottom: 2px solid transparent;
+}
+.auth-tab.active { color: var(--text); border-bottom-color: var(--buy); }
+.auth-x {
+    margin-left: auto; border: none; background: transparent; color: var(--muted);
+    font-size: 15px; cursor: pointer;
+}
+.auth-x:hover { color: var(--text); }
+.auth-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.auth-field label { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.auth-field input {
+    font-family: inherit; font-size: 14px; color: var(--text); color-scheme: dark;
+    background: rgba(255, 255, 255, .04); border: 1px solid var(--card-border);
+    border-radius: 9px; padding: 10px 12px;
+}
+.auth-field input:focus { outline: none; border-color: rgba(47, 157, 255, .6); }
+.auth-hint { font-size: 11px; color: var(--muted-label); margin: -4px 0 12px; }
+.auth-error { font-size: 12px; color: var(--down); min-height: 16px; margin-bottom: 10px; }
+.auth-submit {
+    width: 100%; font-family: inherit; font-size: 14px; font-weight: 600;
+    padding: 11px; border-radius: 10px; border: none; cursor: pointer;
+    background: linear-gradient(135deg, #2f9dff, #3b9eff); color: #fff;
+}
+.auth-submit:disabled { opacity: .6; cursor: default; }
+
+/* About admin editor */
+.about-admin { margin-top: 18px; }
+.about-admin:empty { margin-top: 0; }
+.about-editor {
+    margin-top: 14px; background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--card-border); border-radius: 16px; padding: 16px;
+}
+.about-editor-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.about-editor-actions { display: flex; gap: 8px; }
+#about-ta {
+    width: 100%; min-height: 260px; resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.6;
+    color: var(--text); color-scheme: dark; background: rgba(0, 0, 0, .25);
+    border: 1px solid var(--card-border); border-radius: 10px; padding: 12px;
+}
+.about-edit-err { color: var(--down); font-size: 12px; min-height: 16px; margin-top: 8px; }
+.about-preview-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-label); margin: 12px 0 6px; }
+.about-preview { margin-top: 0; }
+
+/* ==========================================================================
+   USER MANAGEMENT — verify banner, verify/reset pages, admin table
+   ========================================================================== */
+a.auth-btn { text-decoration: none; display: inline-flex; align-items: center; }
+.auth-role.semi { background: linear-gradient(135deg, #818cf8, #6366f1); color: #fff; }
+
+.auth-ok { font-size: 12px; color: var(--up); min-height: 14px; margin-bottom: 8px; }
+.auth-ok a { color: var(--buy); }
+.auth-link-btn {
+    display: block; width: 100%; margin-top: 10px;
+    background: none; border: none; color: var(--muted);
+    font-family: inherit; font-size: 12px; cursor: pointer; text-align: center;
+}
+.auth-link-btn:hover { color: var(--text); text-decoration: underline; }
+
+/* Verify-your-email banner */
+.verify-banner {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-top: 16px; padding: 11px 16px;
+    border-radius: 12px;
+    background: rgba(245, 165, 36, .12);
+    border: 1px solid rgba(245, 165, 36, .4);
+    font-size: 13px; color: #f5c451;
+}
+.verify-banner .vb-text { font-weight: 500; }
+.verify-banner .vb-btn { margin-left: auto; }
+.verify-banner .vb-msg { font-size: 12px; color: var(--muted); flex-basis: 100%; }
+.verify-banner .vb-msg a { color: var(--buy); }
+
+/* Verify / reset standalone pages */
+.auth-status-card {
+    max-width: 460px; margin: 40px auto 0; padding: 32px 28px;
+    text-align: center; background: rgba(255, 255, 255, .03);
+    border: 1px solid var(--card-border); border-radius: 18px;
+}
+.auth-status-icon { font-size: 34px; margin-bottom: 8px; }
+.auth-status-card h2 { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
+.auth-status-msg { font-size: 14px; color: var(--muted); margin: 0; }
+.auth-status-cta { display: inline-block; width: auto; margin-top: 18px; padding-left: 22px; padding-right: 22px; text-decoration: none; }
+
+/* Admin table */
+.admin-table th, .admin-table td { white-space: nowrap; }
+.admin-table td { vertical-align: middle; }
+.admin-username { font-weight: 600; }
+.role-pill {
+    font-size: 10px; font-weight: 700; letter-spacing: .04em;
+    padding: 3px 9px; border-radius: 999px; display: inline-block;
+}
+.role-pill.role-user { background: rgba(255, 255, 255, .08); color: var(--muted); }
+.role-pill.role-semi_admin { background: rgba(129, 140, 248, .18); color: #a9b2ff; }
+.role-pill.role-admin { background: rgba(245, 165, 36, .18); color: #f5c451; }
+.admin-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.admin-role-select { padding: 5px 8px; font-size: 12px; }
+.admin-actions .auth-btn { padding: 6px 11px; font-size: 12px; }
+.admin-del { color: var(--down); border-color: rgba(255, 84, 112, .4); }
+.admin-del:hover { background: rgba(255, 84, 112, .12); }
+.admin-self { color: var(--muted-label); }

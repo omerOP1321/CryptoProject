@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reset password · Crypto AI Prediction</title>
+    <link rel="stylesheet" href="styles.css?v=11">
+    <script src="auth.js?v=11"></script>
+</head>
+<body>
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+
+    <div class="page">
+        <header>
+            <div class="brand">
+                <div class="logo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" fill="#fff"/>
+                    </svg>
+                </div>
+                <div class="title">Crypto AI Prediction</div>
+            </div>
+            <a href="index.html" class="back-link">‹ Back to dashboard</a>
+        </header>
+
+        <div class="auth-status-card">
+            <h2>Choose a new password</h2>
+            <form class="auth-form" id="reset-form" novalidate style="max-width:360px;margin:14px auto 0">
+                <div class="auth-field"><label>New password</label>
+                    <input name="password" type="password" autocomplete="new-password" maxlength="128"></div>
+                <div class="auth-field"><label>Confirm password</label>
+                    <input name="confirm" type="password" autocomplete="new-password" maxlength="128"></div>
+                <p class="auth-hint">8+ characters, with at least one letter and one number.</p>
+                <div class="auth-error" id="reset-err" role="alert"></div>
+                <div class="auth-ok" id="reset-ok" role="status"></div>
+                <button class="auth-submit" type="submit">Reset password</button>
+            </form>
+        </div>
+
+        <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
+    </div>
+
+    <script src="verify-reset.js?v=11" data-flow="reset"></script>
+</body>
+</html>

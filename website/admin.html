@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>About · Crypto AI Prediction</title>
+    <title>Admin · Crypto AI Prediction</title>
     <link rel="stylesheet" href="styles.css?v=11">
     <script src="auth.js?v=11"></script>
 </head>
@@ -19,27 +19,21 @@
                         <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" fill="#fff"/>
                     </svg>
                 </div>
-                <div class="title">Crypto AI Prediction</div>
+                <div class="title">Admin Overview</div>
             </div>
             <a href="index.html" class="back-link">‹ Back to dashboard</a>
         </header>
 
-        <!-- Admin-only edit controls are injected here when an admin is logged in. -->
-        <div id="about-admin" class="about-admin"></div>
+        <div class="section-title" style="margin-top:18px;">Registered users</div>
+        <p class="section-sub" id="admin-sub">Manage accounts, roles and permissions.</p>
 
-        <!-- Content is loaded from the API and rendered as safe markdown. Admins can
-             edit it; everyone else sees it read-only. -->
-        <div id="about-content" class="about">
+        <div id="admin-content">
             <p style="color:var(--muted)">Loading…</p>
         </div>
 
-        <div class="footer">
-            <span>This page's content is managed by an administrator.</span>
-            <span><a href="index.html" class="about-link">Dashboard</a> <a href="analytics.html" class="about-link">Analytics</a></span>
-        </div>
         <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
     </div>
 
-    <script src="about-page.js?v=11"></script>
+    <script src="admin-page.js?v=11"></script>
 </body>
 </html>
