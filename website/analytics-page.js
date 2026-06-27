@@ -10,7 +10,7 @@
     const AUI = window.AnalyticsUI;
     const CU = window.ChartUtils;
     const MODELS = AUI.MODELS;
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+    const supabase = window.sb || window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
     let activeId = 1, activeSym = 'BTC';
     let payload = null;

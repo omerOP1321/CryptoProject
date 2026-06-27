@@ -7,10 +7,11 @@
     <!-- TradingView Lightweight Charts standalone production CDN -->
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="chart-utils.js?v=11"></script>
-    <script src="analytics-ui.js?v=11"></script>
-    <script src="auth.js?v=11"></script>
-    <link rel="stylesheet" href="styles.css?v=11">
+    <script src="supabase-client.js?v=12"></script>
+    <script src="chart-utils.js?v=12"></script>
+    <script src="analytics-ui.js?v=12"></script>
+    <script src="auth.js?v=12"></script>
+    <link rel="stylesheet" href="styles.css?v=12">
 </head>
 <body>
     <div class="blob b1"></div>
@@ -252,7 +253,7 @@
         }
 
         if (isSetupComplete) {
-            const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+            const supabase = window.sb || window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
             async function fetchPredictions() {
                 try {

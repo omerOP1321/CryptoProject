@@ -43,7 +43,7 @@
 
     async function load() {
         try {
-            var data = await A.api('GET', '/api/about');
+            var data = await A.getAbout();
             current = data.content || '';
             contentEl.innerHTML = renderMarkdown(current);
         } catch (e) {
@@ -88,7 +88,7 @@
             var btn = document.getElementById('about-save');
             btn.disabled = true;
             try {
-                var data = await A.api('PUT', '/api/about', { content: ta.value });
+                var data = await A.saveAbout(ta.value);
                 current = data.content;
                 contentEl.innerHTML = renderMarkdown(current);
                 renderAdminBar();

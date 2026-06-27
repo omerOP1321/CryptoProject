@@ -15,7 +15,8 @@
 
     function fmtDate(s) {
         if (!s) return '—';
-        var d = new Date(String(s).replace(' ', 'T') + 'Z');
+        // Supabase returns ISO-8601 (with timezone); parse directly.
+        var d = new Date(s);
         return isNaN(d) ? '—' : d.toLocaleString();
     }
     function el(tag, props, kids) {
@@ -33,8 +34,7 @@
 
     async function load() {
         try {
-            var data = await A.api('GET', '/api/users');
-            state.users = data.users || [];
+            state.users = await A.listUsers();
             render();
         } catch (e) {
             content.textContent = (e && e.status === 403)
@@ -64,7 +64,7 @@
     function buildRow(u) {
         var isSelf = A.user && u.id === A.user.id;
         var tr = el('tr', { 'data-id': u.id });
-        tr.appendChild(el('td', { text: String(u.id) }));
+        tr.appendChild(el('td', { text: String(u.id).slice(0, 8), title: String(u.id) }));
         tr.appendChild(el('td', null, [el('span', { class: 'admin-username', text: u.username + (isSelf ? ' (you)' : '') })]));
         tr.appendChild(el('td', { text: u.email }));
         tr.appendChild(el('td', null, [roleBadge(u.role)]));
@@ -114,7 +114,7 @@
     async function changeRole(u, role, selEl) {
         if (role === u.role) return;
         try {
-            await A.api('PUT', '/api/users/' + u.id + '/role', { role: role });
+            await A.setRole(u.id, role);
             await load();
         } catch (e) {
             alert((e && e.message) || 'Could not change role.');
@@ -125,7 +125,7 @@
     async function removeUser(u) {
         if (!window.confirm('Delete user "' + u.username + '" (#' + u.id + ')? This cannot be undone.')) return;
         try {
-            await A.api('DELETE', '/api/users/' + u.id);
+            await A.deleteUser(u.id);
             await load();
         } catch (e) {
             alert((e && e.message) || 'Could not delete user.');

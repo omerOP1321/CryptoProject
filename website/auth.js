@@ -1,89 +1,187 @@
 /*
- * Auth client + UI, shared by all pages. Talks to the REST API, keeps the
- * current user + CSRF token in memory, and renders a header control plus a
- * login/register modal. Other scripts use window.AuthClient (and its `ready`
- * promise + 'change' events) to react to auth state — e.g. the About editor.
+ * Auth client + UI, shared by all pages. Backed by Supabase Auth (no custom
+ * server): registration, login, email confirmation, password reset and the
+ * session all run through supabase-js against the project's Supabase backend.
  *
- * The API base is derived from the current hostname so the session cookie stays
- * same-site (localhost page -> localhost API, 127.0.0.1 page -> 127.0.0.1 API).
+ * Roles (user / semi_admin / admin) and the About content live in Postgres and
+ * are reached via the SECURITY DEFINER RPCs defined in supabase/auth_setup.sql.
+ *
+ * Other scripts use window.AuthClient (its `ready` promise + 'change' events) to
+ * react to auth state. The public surface is unchanged from the old REST client:
+ *   user, isAdmin(), canReadUsers(), canEditAbout(), on(), ready,
+ *   login(), register(), logout(), forgotPassword(), resendVerification(),
+ *   openModal(), plus the data helpers listUsers()/setRole()/deleteUser()/
+ *   getAbout()/saveAbout()/updatePassword().
  */
 (function () {
     'use strict';
-    var API = location.protocol + '//' + location.hostname + ':4000';
+    var sb = window.sb; // shared client from supabase-client.js
 
     var listeners = [];
     var readyResolve;
     var Auth = {
         user: null,
-        csrfToken: null,
-        apiBase: API,
-        isAdmin: function () { return !!Auth.user && Auth.user.role === 'admin'; },
         on: function (cb) { listeners.push(cb); },
         // Always a promise (created synchronously) so consumers can `.then` it
-        // regardless of script timing; resolves once the initial /me completes.
+        // regardless of script timing; resolves once the initial session loads.
         ready: new Promise(function (res) { readyResolve = res; }),
+        isAdmin: function () { return !!Auth.user && Auth.user.role === 'admin'; },
+        canReadUsers: function () { return !!Auth.user && (Auth.user.role === 'admin' || Auth.user.role === 'semi_admin'); },
+        // About editing is allowed for admin + semi_admin, but only once verified
+        // (the RLS policy enforces it; this mirrors it so the UI matches).
+        canEditAbout: function () { return Auth.canReadUsers() && !!Auth.user.emailVerified; },
     };
     function emit() { listeners.forEach(function (cb) { try { cb(Auth.user); } catch (_) {} }); }
 
-    // ----- API calls -----
-    async function api(method, path, body) {
-        var headers = {};
-        if (body !== undefined) headers['Content-Type'] = 'application/json';
-        if (Auth.csrfToken && method !== 'GET') headers['X-CSRF-Token'] = Auth.csrfToken;
-        var res = await fetch(API + path, {
-            method: method,
-            headers: headers,
-            credentials: 'include',
-            body: body !== undefined ? JSON.stringify(body) : undefined,
-        });
-        var json = null;
-        try { json = await res.json(); } catch (_) {}
-        if (!res.ok) {
-            var msg = (json && json.error) || ('Request failed (' + res.status + ')');
-            var err = new Error(msg); err.status = res.status; err.code = json && json.code;
-            throw err;
-        }
-        return json;
+    // base origin used to build email confirmation / reset redirect links
+    function siteOrigin() { return location.origin; }
+
+    // Turn a supabase-js error into a short, user-safe message.
+    function msgOf(error, fallback) {
+        if (!error) return fallback || 'Something went wrong';
+        var m = error.message || fallback || 'Something went wrong';
+        if (/Email not confirmed/i.test(m)) return 'Please confirm your email first — check your inbox.';
+        if (/Invalid login credentials/i.test(m)) return 'Invalid credentials';
+        return m;
     }
-    Auth.api = api; // exposed for other authenticated views (e.g. About editor)
+
+    // ----- session / current user ------------------------------------------
+    async function buildUser(session) {
+        if (!session || !session.user) return null;
+        var u = session.user;
+        var role = 'user';
+        try {
+            var res = await sb.from('profiles').select('username, role').eq('id', u.id).single();
+            if (res.data) role = res.data.role || 'user';
+            var username = (res.data && res.data.username) || (u.user_metadata && u.user_metadata.username) || u.email;
+        } catch (_) {}
+        return {
+            id: u.id,
+            email: u.email,
+            username: username || u.email,
+            role: role,
+            emailVerified: !!u.email_confirmed_at,
+            createdAt: u.created_at,
+            lastLoginAt: u.last_sign_in_at,
+        };
+    }
 
     async function refresh() {
         try {
-            var data = await api('GET', '/api/auth/me');
-            Auth.user = data.user;
-            Auth.csrfToken = data.csrfToken || null;
+            var res = await sb.auth.getSession();
+            Auth.user = await buildUser(res.data && res.data.session);
         } catch (_) {
-            Auth.user = null; Auth.csrfToken = null;
+            Auth.user = null;
         }
         renderUI();
         emit();
         return Auth.user;
     }
+
+    // ----- auth actions -----------------------------------------------------
     Auth.login = async function (identifier, password) {
-        var data = await api('POST', '/api/auth/login', { identifier: identifier, password: password });
-        Auth.user = data.user; Auth.csrfToken = data.csrfToken; renderUI(); emit(); return data.user;
+        // Supabase signs in by email; resolve a username to its email first.
+        var email = identifier;
+        if (identifier.indexOf('@') === -1) {
+            var r = await sb.rpc('email_for_identifier', { identifier: identifier });
+            email = (r && r.data) || null;
+            if (!email) { var e = new Error('Invalid credentials'); throw e; }
+        }
+        var out = await sb.auth.signInWithPassword({ email: email, password: password });
+        if (out.error) { var err = new Error(msgOf(out.error)); throw err; }
+        await refresh();
+        return Auth.user;
     };
+
     Auth.register = async function (email, username, password) {
-        var data = await api('POST', '/api/auth/register', { email: email, username: username, password: password });
-        Auth.user = data.user; Auth.csrfToken = data.csrfToken; renderUI(); emit(); return data;
+        // friendly pre-check (the DB UNIQUE constraint is the real guard)
+        try {
+            var avail = await sb.rpc('username_available', { uname: username });
+            if (avail && avail.data === false) { var e = new Error('Username is already taken'); throw e; }
+        } catch (pre) { if (pre && /already taken/.test(pre.message)) throw pre; }
+
+        var out = await sb.auth.signUp({
+            email: email,
+            password: password,
+            options: {
+                data: { username: username },
+                emailRedirectTo: siteOrigin() + '/verify.html',
+            },
+        });
+        if (out.error) { var err = new Error(msgOf(out.error)); throw err; }
+        // With "Confirm email" ON, no session is returned until the link is
+        // clicked. Signal the UI to show "check your inbox".
+        var hasSession = !!(out.data && out.data.session);
+        if (hasSession) await refresh();
+        return { needsVerification: !hasSession, email: email };
     };
+
     Auth.logout = async function () {
-        try { await api('POST', '/api/auth/logout'); } catch (_) {}
-        Auth.user = null; Auth.csrfToken = null; renderUI(); emit();
+        try { await sb.auth.signOut(); } catch (_) {}
+        Auth.user = null; renderUI(); emit();
     };
-    // public auth helpers used by the banner and the verify/reset pages
-    Auth.resendVerification = function () { return api('POST', '/api/auth/resend-verification'); };
-    Auth.forgotPassword = function (email) { return api('POST', '/api/auth/forgot-password', { email: email }); };
-    Auth.verifyEmail = function (token) { return api('POST', '/api/auth/verify-email', { token: token }); };
-    Auth.resetPassword = function (token, password) { return api('POST', '/api/auth/reset-password', { token: token, password: password }); };
-    Auth.canReadUsers = function () { return !!Auth.user && (Auth.user.role === 'admin' || Auth.user.role === 'semi_admin'); };
-    // About editing is allowed for admin + semi_admin, but only once verified
-    // (the backend enforces both; this mirrors it so the UI matches).
-    Auth.canEditAbout = function () { return Auth.canReadUsers() && !!Auth.user.emailVerified; };
+
+    Auth.forgotPassword = async function (email) {
+        var out = await sb.auth.resetPasswordForEmail(email, { redirectTo: siteOrigin() + '/reset.html' });
+        // Don't surface whether the email exists (anti-enumeration); ignore errors.
+        return { ok: !out.error };
+    };
+
+    Auth.resendVerification = async function (email) {
+        var addr = email || (Auth.user && Auth.user.email);
+        if (!addr) throw new Error('No email to resend to.');
+        var out = await sb.auth.resend({ type: 'signup', email: addr, options: { emailRedirectTo: siteOrigin() + '/verify.html' } });
+        if (out.error) throw new Error(msgOf(out.error));
+        return { ok: true };
+    };
+
+    // Used by reset.html after the recovery session is established.
+    Auth.updatePassword = async function (newPassword) {
+        var out = await sb.auth.updateUser({ password: newPassword });
+        if (out.error) throw new Error(msgOf(out.error));
+        return { ok: true };
+    };
+
+    // ----- data helpers (replace the old REST endpoints) -------------------
+    Auth.listUsers = async function () {
+        var out = await sb.rpc('admin_list_users');
+        if (out.error) { var e = new Error(out.error.message || 'Could not load users'); e.status = 403; throw e; }
+        return (out.data || []).map(function (u) {
+            return {
+                id: u.id,
+                username: u.username,
+                email: u.email,
+                role: u.role,
+                emailVerified: u.email_verified,
+                createdAt: u.created_at,
+                lastLoginAt: u.last_login_at,
+            };
+        });
+    };
+    Auth.setRole = async function (id, role) {
+        var out = await sb.rpc('admin_set_role', { target: id, new_role: role });
+        if (out.error) throw new Error(out.error.message || 'Could not change role.');
+    };
+    Auth.deleteUser = async function (id) {
+        var out = await sb.rpc('admin_delete_user', { target: id });
+        if (out.error) throw new Error(out.error.message || 'Could not delete user.');
+    };
+    Auth.getAbout = async function () {
+        var out = await sb.from('about_content').select('content').eq('id', 1).single();
+        if (out.error) throw new Error('Could not load About content.');
+        return { content: (out.data && out.data.content) || '' };
+    };
+    Auth.saveAbout = async function (content) {
+        var out = await sb.from('about_content')
+            .update({ content: content, updated_by: Auth.user && Auth.user.id, updated_at: new Date().toISOString() })
+            .eq('id', 1).select('content').single();
+        if (out.error) throw new Error(out.error.message || 'Save failed');
+        return { content: out.data.content };
+    };
 
     function renderUI() { renderHeader(); renderBanner(); }
 
-    // ----- header control -----
+    // ----- header control ---------------------------------------------------
     function renderHeader() {
         var area = document.getElementById('auth-area');
         if (!area) return;
@@ -119,7 +217,9 @@
         });
     }
 
-    // ----- "verify your email" banner -----
+    // ----- "verify your email" banner --------------------------------------
+    // With "Confirm email" ON, an unverified user normally has no session, so
+    // this rarely shows — kept as a safety net if confirmation is disabled.
     var resendCooldownUntil = 0;
     function ensureBanner() {
         if (document.getElementById('verify-banner')) return;
@@ -154,17 +254,12 @@
     }
     async function doResend(btn) {
         var msg = document.querySelector('#verify-banner .vb-msg');
-        var now = Date.now();
-        if (now < resendCooldownUntil) return;
+        if (Date.now() < resendCooldownUntil) return;
         btn.disabled = true;
         try {
-            var res = await Auth.resendVerification();
-            if (msg) {
-                msg.textContent = 'Verification email sent.';
-                if (res && res.devLink) msg.innerHTML = 'Sent. <a href="' + res.devLink + '">Open verification link (dev)</a>';
-            }
-            // 60s cooldown
-            resendCooldownUntil = Date.now() + 60000;
+            await Auth.resendVerification();
+            if (msg) msg.textContent = 'Verification email sent.';
+            resendCooldownUntil = Date.now() + 60000; // 60s cooldown
             var left = 60;
             var tick = setInterval(function () {
                 left -= 1;
@@ -177,7 +272,7 @@
         }
     }
 
-    // ----- modal (login / register / forgot) -----
+    // ----- modal (login / register / forgot) -------------------------------
     var modal = null;
     function buildModal() {
         if (modal) return modal;
@@ -260,6 +355,14 @@
     }
     function closeModal() { if (modal) modal.backdrop.classList.remove('open'); }
 
+    function validRegister(email, username, password) {
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return 'Enter a valid email address.';
+        if (!/^[a-zA-Z0-9_.-]{3,32}$/.test(username)) return 'Username must be 3–32 letters, numbers, dot, dash or underscore.';
+        if (password.length < 8 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password))
+            return 'Password must be 8+ characters and include a letter and a number.';
+        return null;
+    }
+
     async function onSubmit(e) {
         e.preventDefault();
         var m = modal;
@@ -267,15 +370,23 @@
         m.submit.disabled = true;
         try {
             if (m.mode === 'register') {
-                await Auth.register(m.form.email.value.trim(), m.form.identifier.value.trim(), m.form.password.value);
-                closeModal();
+                var email = m.form.email.value.trim();
+                var username = m.form.identifier.value.trim();
+                var pw = m.form.password.value;
+                var bad = validRegister(email, username, pw);
+                if (bad) { m.err.textContent = bad; return; }
+                var res = await Auth.register(email, username, pw);
+                if (res.needsVerification) {
+                    m.ok.textContent = 'Account created. Check your inbox to confirm your email, then log in.';
+                } else {
+                    closeModal();
+                }
             } else if (m.mode === 'login') {
                 await Auth.login(m.form.identifier.value.trim(), m.form.password.value);
                 closeModal();
             } else if (m.mode === 'forgot') {
-                var res = await Auth.forgotPassword(m.form.email.value.trim());
+                await Auth.forgotPassword(m.form.email.value.trim());
                 m.ok.textContent = 'If that email is registered, a reset link has been sent.';
-                if (res && res.devLink) m.ok.innerHTML += ' <a href="' + res.devLink + '">Open reset link (dev)</a>';
             }
         } catch (err) {
             m.err.textContent = err.message || 'Something went wrong';
@@ -287,8 +398,16 @@
     Auth.openModal = openModal;
 
     function init() {
+        if (!sb) {
+            // supabase-client.js / CDN failed to load — degrade gracefully.
+            ensureHeaderArea();
+            readyResolve(null);
+            return;
+        }
         ensureHeaderArea();
         ensureBanner();
+        // React to confirmation / recovery links and cross-tab logout.
+        sb.auth.onAuthStateChange(function () { refresh(); });
         refresh().then(function (u) { readyResolve(u); });
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
