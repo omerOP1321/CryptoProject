@@ -65,6 +65,16 @@
         return 'background: rgba(' + r + ',' + g + ',' + b + ',0.16)';
     }
 
+    function rowCells(r) {
+        return COLS.map(c => {
+            if (c.type === 'model') {
+                return '<td><span class="cmp-model"><span class="dot" style="background:' + MODELS.colors[r.model] + '"></span>' + AUI.esc(MODELS.labelOf(r.model)) + '</span></td>';
+            }
+            const style = c.heat ? heat(r[c.key], c.key, c.higher) : '';
+            return '<td style="' + style + '">' + c.fmt(r[c.key]) + '</td>';
+        }).join('');
+    }
+
     function renderTable() {
         const rows = metrics.slice().sort((a, b) => {
             if (sortKey === 'model') return MODELS.labelOf(a.model).localeCompare(MODELS.labelOf(b.model)) * sortDir;
@@ -72,29 +82,35 @@
             if (av == null) return 1; if (bv == null) return -1;
             return (av - bv) * sortDir;
         });
-        const thead = '<thead><tr>' + COLS.map(c => {
+        const table = document.getElementById('cmp-table');
+        // Persistent thead + tbody so rows can FLIP-reorder on sort / data change.
+        let thead = table.querySelector('thead'), tbody = table.querySelector('tbody');
+        if (!thead) { thead = document.createElement('thead'); table.appendChild(thead); }
+        if (!tbody) {
+            tbody = document.createElement('tbody'); table.appendChild(tbody);
+            // one delegated click handler; rows are reused across renders
+            tbody.addEventListener('click', (e) => {
+                const tr = e.target.closest('tr[data-key]');
+                if (tr) AUI.openModelModal(tr.dataset.key, payload);
+            });
+        }
+        thead.innerHTML = '<tr>' + COLS.map(c => {
             const arrow = c.key === sortKey ? (sortDir < 0 ? ' ▼' : ' ▲') : '';
             return '<th data-key="' + c.key + '">' + c.label + '<span class="arrow">' + arrow + '</span></th>';
-        }).join('') + '</tr></thead>';
-        const tbody = '<tbody>' + rows.map(r => {
-            return '<tr data-model="' + r.model + '">' + COLS.map(c => {
-                if (c.type === 'model') {
-                    return '<td><span class="cmp-model"><span class="dot" style="background:' + MODELS.colors[r.model] + '"></span>' + AUI.esc(MODELS.labelOf(r.model)) + '</span></td>';
-                }
-                const style = c.heat ? heat(r[c.key], c.key, c.higher) : '';
-                return '<td style="' + style + '">' + c.fmt(r[c.key]) + '</td>';
-            }).join('') + '</tr>';
-        }).join('') + '</tbody>';
-        const table = document.getElementById('cmp-table');
-        table.innerHTML = thead + tbody;
-        table.querySelectorAll('th').forEach(th => th.onclick = () => {
+        }).join('') + '</tr>';
+        thead.querySelectorAll('th').forEach(th => th.onclick = () => {
             const k = th.dataset.key;
-            if (k === sortKey) sortDir = -sortDir;
-            else { sortKey = k; sortDir = (k === 'model') ? 1 : -1; }
+            if (k === sortKey) { sortDir = -sortDir; }
+            else {
+                sortKey = k;
+                // first click puts the BEST value on top: ascending when lower is
+                // better (MAE/RMSE/MASE/p-value), descending otherwise.
+                const col = COLS.find(c => c.key === k);
+                sortDir = (k === 'model') ? 1 : (col && col.higher === false ? 1 : -1);
+            }
             renderTable();
         });
-        table.querySelectorAll('tbody tr').forEach(tr => tr.onclick = () =>
-            AUI.openModelModal(tr.dataset.model, payload));
+        AUI.renderRankedList(tbody, rows.map(r => ({ key: r.model, html: rowCells(r) })), { tag: 'tr' });
     }
 
     function legendChips(elId) {

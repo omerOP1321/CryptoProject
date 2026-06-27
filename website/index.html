@@ -7,9 +7,9 @@
     <!-- TradingView Lightweight Charts standalone production CDN -->
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="chart-utils.js?v=4"></script>
-    <script src="analytics-ui.js?v=4"></script>
-    <link rel="stylesheet" href="styles.css?v=4">
+    <script src="chart-utils.js?v=7"></script>
+    <script src="analytics-ui.js?v=7"></script>
+    <link rel="stylesheet" href="styles.css?v=7">
 </head>
 <body>
     <div class="blob b1"></div>
@@ -307,6 +307,7 @@
 
                 if (chartInstance) chartInstance = null;
                 lastRenderKey = '';
+                _lastTop = null;   // different model set per coin; don't cross-notify
 
                 fetchPredictions();
             }
@@ -456,82 +457,104 @@
                 return { pd, stats, isV2, spark: vals };
             }
 
-            // Pick the model with the highest directional accuracy among those that have
-            // at least 5 matured calls. Falls back to ARIMA if none qualify.
-            function pickLeadingModel(fromSec, toSec, hist5m) {
-                const preds = globalPayload.predictions || {};
-                let bestModel = 'ARIMA', bestDir = -1;
-                ALL_MODELS.forEach(m => {
-                    if (!preds[m]) return;
-                    const isV2 = m.endsWith('_v2');
-                    const hist = isV2 ? (globalPayload.prediction_history_v2 || [])
-                                     : (globalPayload.prediction_history || []);
-                    const stats = ChartUtils.computeModelStats(hist, hist5m, m,
-                        { fromSec, toSec, lastN: 200 });
-                    if (stats.dirCount >= 5 && stats.dirAccuracy > bestDir) {
-                        bestDir = stats.dirAccuracy;
-                        bestModel = m;
-                    }
-                });
-                return bestModel;
+            // Memoized per-model info (price, stats, sparkline). The cache key changes
+            // with the coin, range, or payload timestamp, so toggling model visibility
+            // is cheap (no recompute) and the 30s poll only recomputes when new data
+            // actually arrives.
+            let _infoMemoKey = '';
+            let _infoMemo = {};
+            function getModelInfo(model, fromSec, toSec, hist5m, formattedHistory, lastPrice) {
+                const key = [activeCoin, activeRange, customFromSec, customToSec,
+                             globalPayload && globalPayload.timestamp].join('|');
+                if (key !== _infoMemoKey) { _infoMemoKey = key; _infoMemo = {}; }
+                if (model in _infoMemo) return _infoMemo[model];
+                const info = computeModelInfo(model, fromSec, toSec, hist5m, formattedHistory, lastPrice);
+                _infoMemo[model] = info;
+                return info;
             }
 
+            // Rank models by Direction Accuracy (desc). Models with no scored direction
+            // sort last; ties break by sample size then name so the order is stable
+            // (equal models never flicker between renders).
+            function rankModels(models, fromSec, toSec, hist5m, formattedHistory, lastPrice) {
+                const tieBreak = (a, b) =>
+                    (b.info.stats.errorCount !== a.info.stats.errorCount)
+                        ? b.info.stats.errorCount - a.info.stats.errorCount
+                        : labelOf(a.model).localeCompare(labelOf(b.model));
+                return models
+                    .map(m => ({ model: m, info: getModelInfo(m, fromSec, toSec, hist5m, formattedHistory, lastPrice) }))
+                    .filter(x => x.info)
+                    .sort((a, b) => {
+                        const da = a.info.stats.dirAccuracy, db = b.info.stats.dirAccuracy;
+                        if (da === null && db === null) return tieBreak(a, b);
+                        if (da === null) return 1;
+                        if (db === null) return -1;
+                        if (db !== da) return db - da;
+                        return tieBreak(a, b);
+                    });
+            }
+
+            // Uniform inner markup for a model card (same structure for every model so
+            // they reorder smoothly; the #1 card is distinguished only by a CSS class).
+            function buildCardInner(model, info, rank) {
+                const color = MODEL_COLORS[model];
+                const { sig, cls } = signalInfo(info.pd.change_pct);
+                const err = info.stats.avgError !== null ? info.stats.avgError.toFixed(2) + '%' : '—';
+                const dir = info.stats.dirAccuracy !== null ? info.stats.dirAccuracy.toFixed(0) + '%' : '—';
+                return `
+                    <div class="ring">${buildRing(info.stats.dirAccuracy, color)}</div>
+                    <div class="card-top">
+                        <span class="rank-badge">${rank}</span>
+                        <span class="model-name"><span class="dot" style="background:${color}"></span> ${labelOf(model)}</span>
+                    </div>
+                    <div class="std-price">${fmtPrice(info.pd.price)}</div>
+                    <div class="pred-row">${pctPill(info.pd.change_pct)}<span class="signal ${cls}">${sig}</span></div>
+                    ${buildSparkline(info.spark, color)}
+                    <div class="card-footer">
+                        <div class="foot-stat"><span class="fl">Err</span><span class="fv">${err}</span></div>
+                        <div class="foot-stat"><span class="fl">Hit%</span><span class="fv accent">${dir}</span></div>
+                        <div class="foot-stat"><span class="fl">Calls</span><span class="fv">${info.stats.errorCount}</span></div>
+                    </div>
+                    <span class="open-hint">History ›</span>`;
+            }
+
+            // Subtle notification when the #1 model changes (skips the first render and
+            // resets on coin switch).
+            let _lastTop = null, _toastTimer = null;
+            function showToast(html) {
+                let t = document.getElementById('toast');
+                if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; document.body.appendChild(t); }
+                t.innerHTML = html;
+                t.classList.add('show');
+                clearTimeout(_toastTimer);
+                _toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+            }
+            function maybeNotifyTopChange(model) {
+                if (_lastTop !== null && model !== _lastTop) {
+                    showToast(`<span class="dot" style="background:${MODEL_COLORS[model]}"></span> <b>${labelOf(model)}</b> is now the top model`);
+                }
+                _lastTop = model;
+            }
+
+            // Render model cards ranked by Direction Accuracy (best -> far left) with a
+            // FLIP transition so they glide to new positions. Only visible models are
+            // shown; hiding one from the legend removes its card and re-ranks the rest.
             function renderModelCards(fromSec, toSec, hist5m, formattedHistory, lastPrice) {
                 const grid = document.getElementById('model-grid');
-                const cards = [];
-
-                // --- Leading card (dynamic: best directional accuracy) ---
-                const LEADING = pickLeadingModel(fromSec, toSec, hist5m);
-                const lead = computeModelInfo(LEADING, fromSec, toSec, hist5m, formattedHistory, lastPrice);
-                if (lead) {
-                    const color = MODEL_COLORS[LEADING];
-                    const { sig, cls } = signalInfo(lead.pd.change_pct);
-                    const err = lead.stats.avgError !== null ? lead.stats.avgError.toFixed(2) + '% err' : '—';
-                    const dir = lead.stats.dirAccuracy !== null ? lead.stats.dirAccuracy.toFixed(0) + '%' : '—';
-                    cards.push(`<div class="card leading" onclick="openModelDetail('${LEADING}')" title="Click for full prediction history & analytics">
-                        <div class="ring">${buildRing(lead.stats.dirAccuracy, color)}</div>
-                        <div class="card-top">
-                            <span class="lead-badge">★ LEADING MODEL</span>
-                        </div>
-                        <div class="model-name"><span class="dot" style="background:${color}"></span> ${labelOf(LEADING)}</div>
-                        <div class="lead-price">${fmtPrice(lead.pd.price)}</div>
-                        <div class="pred-row">${pctPill(lead.pd.change_pct)}<span class="signal ${cls}">${sig}</span></div>
-                        ${buildSparkline(lead.spark, color)}
-                        <div class="card-footer">
-                            <div class="foot-stat"><span class="fl">Avg Error</span><span class="fv">${err}</span></div>
-                            <div class="foot-stat"><span class="fl">Calls Correct</span><span class="fv accent">${dir}</span></div>
-                            <div class="foot-stat"><span class="fl">Calls Made</span><span class="fv">${lead.stats.errorCount}</span></div>
-                        </div>
-                        <span class="open-hint">History ›</span>
-                    </div>`);
+                const ranked = rankModels(visibleModels, fromSec, toSec, hist5m, formattedHistory, lastPrice);
+                grid.style.setProperty('--cols', Math.max(1, ranked.length));
+                if (!ranked.length) {
+                    grid.innerHTML = '<div class="cards-empty">No models selected — re-enable one from the chart legend below.</div>';
+                    _lastTop = null;
+                    return;
                 }
-
-                // --- Standard cards (all models except the current leader) ---
-                ALL_MODELS.filter(m => m !== LEADING).forEach(m => {
-                    const info = computeModelInfo(m, fromSec, toSec, hist5m, formattedHistory, lastPrice);
-                    if (!info) return;
-                    const color = MODEL_COLORS[m];
-                    const { sig, cls } = signalInfo(info.pd.change_pct);
-                    const err = info.stats.avgError !== null ? info.stats.avgError.toFixed(2) + '%' : '—';
-                    const dir = info.stats.dirAccuracy !== null ? info.stats.dirAccuracy.toFixed(0) + '%' : '—';
-                    cards.push(`<div class="card" onclick="openModelDetail('${m}')" title="Click for full prediction history & analytics">
-                        <div class="card-top">
-                            <span class="model-name"><span class="dot" style="background:${color}"></span> ${labelOf(m)}</span>
-                            <span class="tag">${MODEL_TAGS[m]}</span>
-                        </div>
-                        <div class="std-price">${fmtPrice(info.pd.price)}</div>
-                        <div class="pred-row">${pctPill(info.pd.change_pct)}<span class="signal ${cls}">${sig}</span></div>
-                        ${buildSparkline(info.spark, color)}
-                        <div class="card-footer">
-                            <div class="foot-stat"><span class="fl">Err</span><span class="fv">${err}</span></div>
-                            <div class="foot-stat"><span class="fl">Hit%</span><span class="fv">${dir}</span></div>
-                            <div class="foot-stat"><span class="fl">Calls</span><span class="fv">${info.stats.errorCount}</span></div>
-                        </div>
-                        <span class="open-hint">History ›</span>
-                    </div>`);
-                });
-
-                grid.innerHTML = cards.join('');
+                const items = ranked.map((x, i) => ({
+                    key: x.model,
+                    className: 'card' + (i === 0 ? ' leading' : ''),
+                    html: buildCardInner(x.model, x.info, i + 1)
+                }));
+                window.AnalyticsUI.renderRankedList(grid, items);
+                maybeNotifyTopChange(ranked[0].model);
             }
 
             function renderDashboard() {
@@ -956,56 +979,69 @@
                     color: MODEL_COLORS[m],
                     data: dirAccuracyByBucket(predHist, hist5m, m, fromSec, toSec, 7)
                 }));
-                const sessionChart = `<div class="stats-section">
-                    <h3>Calls predicted correctly · last 7 sessions</h3>
-                    ${buildSessionChart(series)}
-                </div>`;
+                // Hit-ratio bars, ranked best -> worst (highest directional accuracy on
+                // top). Null accuracy (no scored direction) sinks to the bottom.
+                const hitItems = LEGEND_ORDER
+                    .map(m => ({ m, s: info[m] }))
+                    .sort((a, b) => {
+                        const x = a.s.dirAccuracy, y = b.s.dirAccuracy;
+                        if (x === null && y === null) return 0;
+                        if (x === null) return 1; if (y === null) return -1;
+                        return y - x;
+                    })
+                    .map(({ m, s }) => {
+                        const color = MODEL_COLORS[m];
+                        const pct = s.dirAccuracy;
+                        const correct = pct !== null ? Math.round(pct / 100 * s.errorCount) : 0;
+                        const w = pct !== null ? Math.max(0, Math.min(100, pct)) : 0;
+                        return { key: m, className: 'hit-row', html: `
+                            <div class="hit-top">
+                                <span class="hit-name"><span class="dot" style="background:${color}"></span>${labelOf(m)}</span>
+                                <span class="hit-pct" style="color:${color}">${pct !== null ? pct.toFixed(0) + '%' : '—'}</span>
+                            </div>
+                            <div class="hit-bar">
+                                <div class="fill" style="width:${w}%;background:${color}"></div>
+                                <div class="mid"></div>
+                            </div>
+                            <div class="hit-cap">${correct} of ${s.errorCount} completed calls predicted correctly</div>` };
+                    });
 
-                // Hit-ratio bars (all models)
-                const hitRows = LEGEND_ORDER.map(m => {
-                    const s = info[m];
-                    const color = MODEL_COLORS[m];
-                    const pct = s.dirAccuracy;
-                    const correct = pct !== null ? Math.round(pct / 100 * s.errorCount) : 0;
-                    const w = pct !== null ? Math.max(0, Math.min(100, pct)) : 0;
-                    return `<div class="hit-row">
-                        <div class="hit-top">
-                            <span class="hit-name"><span class="dot" style="background:${color}"></span>${labelOf(m)}</span>
-                            <span class="hit-pct" style="color:${color}">${pct !== null ? pct.toFixed(0) + '%' : '—'}</span>
-                        </div>
-                        <div class="hit-bar">
-                            <div class="fill" style="width:${w}%;background:${color}"></div>
-                            <div class="mid"></div>
-                        </div>
-                        <div class="hit-cap">${correct} of ${s.errorCount} completed calls predicted correctly</div>
-                    </div>`;
-                }).join('');
-                const hitSection = `<div class="stats-section">
-                    <h3>Who predicted the move correctly?</h3>
-                    <p class="sub">Of each model's completed predictions, how many times it correctly called up or down. The midpoint marks 50% (coin-flip baseline).</p>
-                    ${hitRows}
-                </div>`;
+                // Avg error bars, ranked best -> worst (lowest error on top).
+                const errItems = LEGEND_ORDER
+                    .map(m => ({ m, s: info[m] }))
+                    .sort((a, b) => {
+                        const x = a.s.avgError, y = b.s.avgError;
+                        if (x === null && y === null) return 0;
+                        if (x === null) return 1; if (y === null) return -1;
+                        return x - y;
+                    })
+                    .map(({ m, s }) => {
+                        const color = MODEL_COLORS[m];
+                        const e = s.avgError;
+                        const w = (e !== null && maxErr > 0) ? Math.min(100, e / maxErr * 100) : 0;
+                        return { key: m, className: 'err-row', html:
+                            `<span class="en">${labelOf(m)}</span>` +
+                            `<div class="eb"><div class="fill" style="width:${w}%;background:${color}"></div></div>` +
+                            `<span class="ev">${e !== null ? e.toFixed(2) + '%' : '—'}</span>` };
+                    });
 
-                // Avg error bars (lower = better)
-                const errBars = LEGEND_ORDER.map(m => {
-                    const s = info[m];
-                    const color = MODEL_COLORS[m];
-                    const e = s.avgError;
-                    const w = (e !== null && maxErr > 0) ? Math.min(100, e / maxErr * 100) : 0;
-                    return `<div class="err-row">
-                        <span class="en">${labelOf(m)}</span>
-                        <div class="eb"><div class="fill" style="width:${w}%;background:${color}"></div></div>
-                        <span class="ev">${e !== null ? e.toFixed(2) + '%' : '—'}</span>
-                    </div>`;
-                }).join('');
-                const errSection = `<div class="stats-section">
-                    <h3>Average price error by model</h3>
-                    <p class="sub">lower is better</p>
-                    ${errBars}
-                </div>`;
-
-                document.getElementById('stats-body').innerHTML =
-                    tiles + sessionChart + hitSection + errSection;
+                // Build the scaffold once; thereafter only the contents update so the
+                // ranked bars can FLIP-animate into their new order as values change.
+                const body = document.getElementById('stats-body');
+                if (!document.getElementById('st-hit')) {
+                    body.innerHTML =
+                        '<div id="st-tiles"></div>' +
+                        '<div class="stats-section"><h3>Calls predicted correctly · last 7 sessions</h3><div id="st-session"></div></div>' +
+                        '<div class="stats-section"><h3>Who predicted the move correctly?</h3>' +
+                        '<p class="sub">Of each model\'s completed predictions, how many times it correctly called up or down. The midpoint marks 50% (coin-flip baseline). Best model on top.</p>' +
+                        '<div id="st-hit"></div></div>' +
+                        '<div class="stats-section"><h3>Average price error by model</h3>' +
+                        '<p class="sub">lower is better · best model on top</p><div id="st-err"></div></div>';
+                }
+                document.getElementById('st-tiles').innerHTML = tiles;
+                document.getElementById('st-session').innerHTML = buildSessionChart(series);
+                window.AnalyticsUI.renderRankedList(document.getElementById('st-hit'), hitItems);
+                window.AnalyticsUI.renderRankedList(document.getElementById('st-err'), errItems);
             }
 
             function chartHeight() {
@@ -1043,6 +1079,13 @@
             window.openStats = openStats;
             window.closeStats = closeStats;
             window.openModelDetail = openModelDetail;
+
+            // Delegated click: cards are reconciled DOM nodes (no inline handlers),
+            // so one listener on the grid opens the right model's modal.
+            document.getElementById('model-grid').addEventListener('click', (e) => {
+                const card = e.target.closest('.card[data-key]');
+                if (card) openModelDetail(card.dataset.key);
+            });
 
             updateAutoScaleButton();
             updatePriceLinesButton();

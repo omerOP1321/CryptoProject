@@ -193,12 +193,22 @@ header {
 .market-delta { font-size: 14px; font-weight: 600; }
 .market-note { font-size: 12px; color: var(--muted); text-align: right; }
 
-/* ---------- Model grid ---------- */
+/* ---------- Model grid (ranked, uniform cards) ---------- */
 .model-grid {
     display: grid;
-    grid-template-columns: 1.5fr repeat(4, 1fr);
+    /* one equal column per visible model; --cols is set by JS as models hide/show */
+    grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr));
     gap: 14px;
     margin-top: 18px;
+}
+.cards-empty {
+    grid-column: 1 / -1;
+    padding: 32px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    border: 1px dashed var(--card-border);
+    border-radius: 16px;
 }
 .card {
     position: relative;
@@ -206,13 +216,12 @@ header {
     border: 1px solid var(--card-border);
     border-radius: 16px;
     padding: 16px;
-    transition: transform .2s ease, border-color .2s ease, background .2s ease;
+    cursor: pointer;
+    transition: border-color .2s ease, background .2s ease;
 }
-.card:not(.leading):hover {
-    transform: translateY(-3px);
-    border-color: rgba(255, 255, 255, .18);
-    background: rgba(255, 255, 255, .06);
-}
+/* hover lift is a child transform so it never fights the FLIP transform on .card */
+.card .open-hint { transition: opacity .2s ease; }
+.card:hover { border-color: rgba(255, 255, 255, .18); background: rgba(255, 255, 255, .06); }
 .card.leading {
     background: linear-gradient(150deg, rgba(34, 211, 238, .16), rgba(10, 14, 18, .4) 60%);
     border-color: rgba(34, 211, 238, .3);
@@ -225,9 +234,24 @@ header {
 
 .card-top {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 8px;
     margin-bottom: 12px;
+    padding-right: 50px;   /* clear the accuracy ring in the top-right corner */
+}
+.rank-badge {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 20px; height: 20px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, .08);
+    color: var(--muted);
+    font-size: 11px; font-weight: 700;
+}
+.card.leading .rank-badge {
+    background: linear-gradient(135deg, #f5d142, #f5a524);
+    color: #1a1205;
 }
 .lead-badge {
     font-size: 11px;
@@ -268,10 +292,30 @@ header {
 .sig-sell { color: var(--down); }
 .sig-neutral { color: var(--muted); }
 
-.ring { position: absolute; top: 14px; right: 14px; }
+.ring { position: absolute; top: 12px; right: 12px; }
+.ring svg { width: 48px; height: 48px; display: block; }
 
 .spark { width: 100%; height: 30px; margin-top: 12px; display: block; }
-.leading .spark { height: 34px; }
+
+/* Top-performer toast (subtle ranking-change notification) */
+.toast {
+    position: fixed;
+    left: 50%; bottom: 26px;
+    transform: translate(-50%, 16px);
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 16px;
+    border-radius: 12px;
+    background: rgba(12, 17, 24, .96);
+    border: 1px solid rgba(34, 211, 238, .4);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+    color: var(--text);
+    font-size: 13px;
+    z-index: 80;
+    opacity: 0; visibility: hidden;
+    transition: opacity .3s ease, transform .3s cubic-bezier(.22, 1, .36, 1), visibility .3s;
+}
+.toast.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+.toast .dot { width: 9px; height: 9px; border-radius: 50%; }
 
 .card-footer {
     display: flex;
@@ -522,14 +566,9 @@ header {
    RESPONSIVE — tablet (≤860px) → mobile (≤640px) → small phone (≤400px)
    ========================================================================== */
 
-/* ---- Tablet: 2-col card grid ---- */
+/* ---- Tablet: 2-col card grid (uniform, still ranked left-to-right, top-to-bottom) ---- */
 @media (max-width: 860px) {
     .model-grid { grid-template-columns: 1fr 1fr; }
-    .card.leading { grid-column: 1 / -1; }
-
-    /* Leading card: side-by-side layout when it spans full width */
-    .card.leading .lead-price { font-size: 24px; }
-    .ring { position: static; margin-left: auto; }
 
     /* Stats drawer narrower on tablet */
     .stats-drawer { width: 420px; }
@@ -564,12 +603,10 @@ header {
     .market-price { font-size: 24px; }
     .market-note { text-align: left; font-size: 11px; }
 
-    /* Cards: single column, leading card full width */
+    /* Cards: single column */
     .model-grid { grid-template-columns: 1fr; gap: 10px; }
-    .card.leading { grid-column: auto; }
-    .lead-price { font-size: 24px; }
     .std-price { font-size: 19px; }
-    .ring { position: absolute; top: 14px; right: 14px; }
+    .ring { position: absolute; top: 12px; right: 12px; }
 
     /* Chart */
     .chart-card { padding: 14px; border-radius: 14px; }

@@ -85,6 +85,63 @@
         rootEl.addEventListener('mouseleave', function () { tip.classList.remove('show'); });
     }
 
+    // ------------------------------------------------------ FLIP reordering
+    // Smooth reordering by reusing the project's slide easing. Measure positions
+    // before a DOM mutation, then animate each surviving child from its old box to
+    // its new one (translate + scale). New children fade/scale in. Honors
+    // prefers-reduced-motion. This is the single animation primitive reused by the
+    // model cards, the statistics bars, and the analytics comparison table.
+    var FLIP_EASING = 'cubic-bezier(.22,1,.36,1)';
+    function prefersReducedMotion() {
+        return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    function flipMove(container, mutate, opts) {
+        opts = opts || {};
+        var dur = opts.duration || 460, easing = opts.easing || FLIP_EASING;
+        var prev = new Map();
+        Array.prototype.forEach.call(container.children, function (c) { prev.set(c, c.getBoundingClientRect()); });
+        mutate();
+        if (prefersReducedMotion() || typeof container.children[0] === 'undefined') return;
+        Array.prototype.forEach.call(container.children, function (c) {
+            var f = prev.get(c), l = c.getBoundingClientRect();
+            if (!f) {
+                if (c.animate) c.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'none' }], { duration: dur, easing: easing });
+                return;
+            }
+            var dx = f.left - l.left, dy = f.top - l.top;
+            var sx = l.width ? f.width / l.width : 1, sy = l.height ? f.height / l.height : 1;
+            if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) return;
+            if (!c.animate) return;
+            c.animate([
+                { transformOrigin: 'top left', transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ',' + sy + ')' },
+                { transformOrigin: 'top left', transform: 'none' }
+            ], { duration: dur, easing: easing });
+        });
+    }
+
+    // Reconcile a keyed list to `items` (already in the desired order) and animate
+    // the reordering. Each item: { key, html, className }. Container children carry
+    // data-key so the same DOM node persists across renders (required for FLIP and
+    // to avoid destroying focus/scroll). Returns nothing; mutates the container.
+    function renderRankedList(container, items, opts) {
+        opts = opts || {};
+        var tag = opts.tag || 'div';
+        var existing = {};
+        Array.prototype.forEach.call(container.children, function (c) { existing[c.dataset.key] = c; });
+        var desired = {};
+        items.forEach(function (it) { desired[it.key] = true; });
+        flipMove(container, function () {
+            Object.keys(existing).forEach(function (k) { if (!desired[k]) existing[k].remove(); });
+            items.forEach(function (it) {
+                var node = existing[it.key];
+                if (!node) { node = document.createElement(tag); node.dataset.key = it.key; }
+                if (it.className != null && node.className !== it.className) node.className = it.className;
+                if (it.html != null) node.innerHTML = it.html;
+                container.appendChild(node); // appending in order performs the reorder
+            });
+        }, opts);
+    }
+
     // ------------------------------------------------------ svg helpers
     function downsample(arr, max) {
         if (arr.length <= max) return arr;
@@ -570,6 +627,8 @@
         renderModelAnalytics: renderModelAnalytics,
         fullLog: fullLog,
         attachTooltips: attachTooltips,
+        // animation / reordering
+        flipMove: flipMove, renderRankedList: renderRankedList,
         // chart primitives (used by analytics.html)
         svgScatter: svgScatter, svgHistogram: svgHistogram, svgConfusion: svgConfusion,
         svgLineMulti: svgLineMulti, svgBarsH: svgBarsH, metricTile: metricTile,
