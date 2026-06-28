@@ -43,14 +43,21 @@
             }
             var session = await currentSession();
             if (session) {
-                icon.textContent = '✓'; title.textContent = 'Email verified';
-                msg.textContent = 'Your email is confirmed. Redirecting to the dashboard…';
+                icon.textContent = '🎉'; title.textContent = 'You\'re all set!';
+                cta.textContent = 'Go to home';
                 cta.style.display = '';
-                go('index.html', 1800);
+                var secs = 6;
+                function tick() {
+                    msg.textContent = 'Redirecting you to the home page in ' + secs + ' seconds…';
+                    if (secs <= 0) { location.href = 'index.html'; return; }
+                    secs--;
+                    setTimeout(tick, 1000);
+                }
+                tick();
             } else {
                 icon.textContent = '⚠️'; title.textContent = 'Invalid link';
                 msg.textContent = 'This verification link is invalid or has already been used. ' +
-                    'Log in, then use “Resend email” if you still need to confirm.';
+                    'Log in, then use "Resend email" if you still need to verify.';
                 cta.style.display = '';
             }
         }());
