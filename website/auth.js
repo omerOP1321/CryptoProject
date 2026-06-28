@@ -201,7 +201,42 @@
         }
     }
 
+    // ----- primary navigation (consistent across every page) ---------------
+    var NAV_ITEMS = [
+        { href: 'analytics.html', label: 'Analytics',
+          icon: '<path d="M3 17l6-6 4 4 7-7"/><path d="M14 7h6v6"/>' },
+        { href: 'investment.html', label: 'Investments',
+          icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>' },
+        { href: 'about.html', label: 'About',
+          icon: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>' }
+    ];
+    function ensureMainNav() {
+        var header = document.querySelector('header');
+        if (!header || header.querySelector('.main-nav')) return;
+        var brand = header.querySelector('.brand');
+        // make the logo/brand click through to the dashboard
+        if (brand && !brand.closest('a') && brand.tagName !== 'A') {
+            brand.style.cursor = 'pointer';
+            brand.addEventListener('click', function () { window.location.href = 'index.html'; });
+        }
+        var here = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
+        var nav = document.createElement('nav');
+        nav.className = 'main-nav';
+        nav.setAttribute('aria-label', 'Primary');
+        nav.innerHTML = NAV_ITEMS.map(function (it) {
+            var active = (here === it.href) ? ' active' : '';
+            return '<a class="nav-link' + active + '" href="' + it.href + '"' +
+                (active ? ' aria-current="page"' : '') + '>' +
+                '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+                'stroke-linecap="round" stroke-linejoin="round">' + it.icon + '</svg>' +
+                '<span class="nav-label">' + it.label + '</span></a>';
+        }).join('');
+        if (brand && brand.nextSibling) header.insertBefore(nav, brand.nextSibling);
+        else header.appendChild(nav);
+    }
+
     function ensureHeaderArea() {
+        ensureMainNav();
         var header = document.querySelector('header');
         if (!header || document.getElementById('auth-area')) return;
         var area = document.createElement('div');
