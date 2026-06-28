@@ -120,8 +120,8 @@ returns table (
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not exists (
-    select 1 from public.profiles
-    where id = auth.uid() and role in ('admin','semi_admin')
+    select 1 from public.profiles p
+    where p.id = auth.uid() and p.role in ('admin','semi_admin')
   ) then
     raise exception 'forbidden' using errcode = '42501';
   end if;
