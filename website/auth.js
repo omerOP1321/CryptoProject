@@ -186,8 +186,8 @@
     };
     Auth.saveTeam = async function (members) {
         var out = await sb.from('team_content')
-            .update({ members: members, updated_by: Auth.user && Auth.user.id, updated_at: new Date().toISOString() })
-            .eq('id', 1).select('members').single();
+            .upsert({ id: 1, members: members, updated_by: Auth.user && Auth.user.id, updated_at: new Date().toISOString() })
+            .select('members').single();
         if (out.error) throw new Error(out.error.message || 'Save failed');
         return { members: out.data.members };
     };

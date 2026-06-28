@@ -317,19 +317,20 @@
                 };
             });
             document.getElementById('tm-save').onclick = async function () {
-                sync();
                 var errEl = document.getElementById('tm-err');
-                errEl.textContent = '';
-                var clean = draft.filter(function (m) { return m && m.name; });
-                if (!clean.length) { errEl.textContent = 'Add at least one member (name required).'; return; }
                 var btn = document.getElementById('tm-save');
-                btn.disabled = true;
+                errEl.textContent = '';
                 try {
+                    sync();
+                    var clean = draft.filter(function (m) { return m && m.name; });
+                    if (!clean.length) { errEl.textContent = 'Add at least one member (name required).'; return; }
+                    btn.disabled = true;
                     var data = await A.saveTeam(clean);
                     teamData = (data && data.members) || clean;
                     renderTeam();
                 } catch (e) {
                     errEl.textContent = e.message || 'Save failed';
+                    errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                     btn.disabled = false;
                 }
             };
