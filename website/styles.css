@@ -760,7 +760,9 @@ header {
 /* Model cards are clickable to open the per-model modal */
 .model-grid .card { cursor: pointer; }
 .card .open-hint {
-    position: absolute; bottom: 10px; right: 12px;
+    display: block;
+    text-align: right;
+    margin-top: 8px;
     font-size: 9px; letter-spacing: .08em; text-transform: uppercase;
     color: var(--muted-label); opacity: 0; transition: opacity .2s ease;
 }
