@@ -199,8 +199,8 @@
         var area = document.getElementById('auth-area');
         if (!area) return;
         if (Auth.user) {
-            var roleBadge = Auth.user.role === 'admin' ? '<span class="auth-role">ADMIN</span>'
-                : (Auth.user.role === 'semi_admin' ? '<span class="auth-role semi">SEMI</span>' : '');
+            var roleBadge = Auth.user.role === 'admin' ? '<span class="auth-role">SUPER ADMIN</span>'
+                : (Auth.user.role === 'semi_admin' ? '<span class="auth-role semi">ADMIN</span>' : '');
             var adminLink = Auth.canReadUsers() ? '<a class="auth-btn" href="admin.html">Admin</a>' : '';
             area.innerHTML =
                 adminLink +

@@ -9,7 +9,7 @@
     'use strict';
     var A = window.AuthClient;
     var ROLES = ['user', 'semi_admin', 'admin'];
-    var ROLE_LABEL = { user: 'User', semi_admin: 'Semi Admin', admin: 'Admin' };
+    var ROLE_LABEL = { user: 'User', semi_admin: 'Admin', admin: 'Super Admin' };
     var content = document.getElementById('admin-content');
     var sub = document.getElementById('admin-sub');
 
@@ -99,7 +99,7 @@
         // quick grant/revoke semi-admin
         if (u.role === 'user' || u.role === 'semi_admin') {
             var grant = u.role === 'user';
-            var btn = el('button', { class: 'auth-btn', text: grant ? 'Grant semi-admin' : 'Revoke semi-admin' });
+            var btn = el('button', { class: 'auth-btn', text: grant ? 'Grant admin' : 'Revoke admin' });
             btn.addEventListener('click', function () { changeRole(u, grant ? 'semi_admin' : 'user'); });
             td.appendChild(btn);
         }
@@ -136,7 +136,7 @@
     A.ready.then(function () {
         if (!A.canReadUsers()) {
             content.innerHTML = '';
-            content.appendChild(el('div', { class: 'cards-empty', text: 'You must be an admin or semi-admin to view this page.' }));
+            content.appendChild(el('div', { class: 'cards-empty', text: 'You must be a super admin or admin to view this page.' }));
             sub.textContent = 'Access restricted.';
             return;
         }
