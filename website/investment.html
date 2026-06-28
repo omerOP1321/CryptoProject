@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investment Simulation · Crypto AI Prediction</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-client.js?v=13"></script>
+    <script src="chart-utils.js?v=13"></script>
+    <script src="analytics-ui.js?v=13"></script>
+    <script src="auth.js?v=13"></script>
+    <link rel="stylesheet" href="styles.css?v=13">
+</head>
+<body>
+    <div class="blob b1"></div>
+    <div class="blob b2"></div>
+
+    <div class="page">
+        <header>
+            <div class="brand">
+                <div class="logo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" fill="#fff"/>
+                    </svg>
+                </div>
+                <div class="title">Investment Simulation</div>
+            </div>
+            <a href="index.html" class="back-link">‹ Back to dashboard</a>
+        </header>
+
+        <p class="section-sub" style="margin-top:14px">
+            See how an investment would have performed had you followed each model’s predictions.
+            Pick an asset, an amount and a date range, then hit <strong>Calculate</strong>.
+            <em>Academic research tool — raw gross performance, no fees or slippage.</em>
+        </p>
+
+        <!-- ---- Control panel -------------------------------------------- -->
+        <div class="inv-panel">
+            <div class="inv-field full">
+                <label>Asset</label>
+                <div class="coin-tabs" id="inv-coins"></div>
+            </div>
+
+            <div class="inv-field">
+                <label for="inv-amount">Initial amount (USD)</label>
+                <input type="number" id="inv-amount" min="1" step="100" value="1000" class="inv-input">
+            </div>
+            <div class="inv-field">
+                <label for="inv-start">Start date</label>
+                <input type="date" id="inv-start" class="inv-input">
+            </div>
+            <div class="inv-field">
+                <label for="inv-end">End date</label>
+                <input type="date" id="inv-end" class="inv-input">
+            </div>
+
+            <div class="inv-field full">
+                <label>Mode</label>
+                <div class="seg">
+                    <button class="seg-btn active" id="mode-single">Single model (rank all)</button>
+                    <button class="seg-btn" id="mode-alloc">Portfolio allocation</button>
+                </div>
+            </div>
+
+            <div class="inv-field full" id="alloc-panel" style="display:none">
+                <label>Allocate your capital across models (weights are normalised)</label>
+                <div class="alloc-rows" id="alloc-rows"></div>
+            </div>
+
+            <div class="inv-actions full">
+                <span class="inv-range-note" id="inv-range-note">Data range loading…</span>
+                <span class="spacer"></span>
+                <button class="auth-btn" id="inv-save">Save</button>
+                <button class="calc-btn" id="inv-calc">Calculate</button>
+            </div>
+        </div>
+
+        <!-- ---- View tabs ------------------------------------------------ -->
+        <div class="view-tabs">
+            <button class="view-tab active" id="view-results">Results</button>
+            <button class="view-tab" id="view-leaderboard">Historical leaderboard</button>
+            <button class="view-tab" id="view-saved">Saved simulations</button>
+        </div>
+
+        <div id="inv-results"></div>
+
+        <div class="footer">
+            <span>All calculations run on the backend (Supabase Edge Function). Long/short strategy, raw gross performance.</span>
+            <span><a href="index.html" class="about-link">Dashboard</a> <a href="analytics.html" class="about-link">Analytics</a> <a href="about.html" class="about-link">About</a></span>
+        </div>
+        <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
+    </div>
+
+    <script src="investment-page.js?v=13"></script>
+</body>
+</html>

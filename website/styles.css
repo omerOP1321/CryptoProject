@@ -1105,3 +1105,112 @@ a.auth-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .admin-del { color: var(--down); border-color: rgba(255, 84, 112, .4); }
 .admin-del:hover { background: rgba(255, 84, 112, .12); }
 .admin-self { color: var(--muted-label); }
+
+/* ===================================================================== */
+/*  Investment Simulation page                                           */
+/* ===================================================================== */
+.pos { color: var(--up); }
+.neg { color: var(--down); }
+.muted { color: var(--muted); }
+
+.inv-panel {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 18px;
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    border-radius: 16px; padding: 18px 20px; margin: 18px 0 6px;
+}
+.inv-field { display: flex; flex-direction: column; gap: 7px; }
+.inv-field.full { grid-column: 1 / -1; }
+.inv-field label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+.inv-input {
+    font-family: inherit; font-size: 14px; color: var(--text); font-weight: 500;
+    background: rgba(255,255,255,.04); border: 1px solid var(--card-border);
+    border-radius: 10px; padding: 10px 12px; color-scheme: dark; width: 100%;
+}
+.inv-input:focus { outline: none; border-color: var(--buy); }
+.inv-field .coin-tabs { gap: 8px; }
+
+.seg { display: inline-flex; background: rgba(255,255,255,.04); border: 1px solid var(--card-border); border-radius: 10px; padding: 3px; gap: 3px; }
+.seg-btn {
+    font-family: inherit; font-size: 12px; font-weight: 600; color: var(--muted);
+    background: transparent; border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer;
+}
+.seg-btn.active { background: rgba(47,157,255,.16); color: var(--text); }
+
+.alloc-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 18px; }
+.alloc-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+.alloc-row .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.alloc-name { flex: 1; }
+.alloc-input {
+    width: 64px; font-family: inherit; font-size: 13px; color: var(--text);
+    background: rgba(255,255,255,.04); border: 1px solid var(--card-border);
+    border-radius: 8px; padding: 6px 8px; color-scheme: dark;
+}
+
+.inv-actions { display: flex; align-items: center; gap: 10px; }
+.inv-actions .spacer { flex: 1; }
+.inv-range-note { font-size: 11px; color: var(--muted-label); }
+.calc-btn {
+    font-family: inherit; font-size: 14px; font-weight: 600; color: #04121f;
+    background: var(--buy); border: none; border-radius: 10px; padding: 10px 22px; cursor: pointer;
+    transition: filter .15s ease, opacity .15s ease;
+}
+.calc-btn:hover { filter: brightness(1.08); }
+.calc-btn:disabled { opacity: .6; cursor: default; }
+
+.view-tabs { display: flex; gap: 6px; margin: 22px 0 4px; border-bottom: 1px solid var(--card-border); }
+.view-tab {
+    font-family: inherit; font-size: 13px; font-weight: 600; color: var(--muted);
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 10px 14px; cursor: pointer; margin-bottom: -1px;
+}
+.view-tab.active { color: var(--text); border-bottom-color: var(--buy); }
+
+.inv-highlight { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0; }
+.inv-hl-card {
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    border-radius: 14px; padding: 16px 18px;
+}
+.inv-hl-card.good { border-color: rgba(99,255,47,.35); box-shadow: 0 0 0 1px rgba(99,255,47,.12) inset; }
+.inv-hl-card.bad { border-color: rgba(255,84,112,.32); }
+.inv-hl-card.bh { border-style: dashed; }
+.inv-hl-card.port { border-color: rgba(255,255,255,.4); }
+.inv-hl-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.inv-hl-model { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; margin: 8px 0 6px; }
+.inv-hl-model .dot { width: 9px; height: 9px; border-radius: 50%; }
+.inv-hl-value { font-size: 24px; font-weight: 700; }
+.inv-hl-sub { font-size: 12px; font-weight: 600; margin-top: 3px; }
+
+.inv-table .rk { color: var(--muted); font-weight: 700; }
+.inv-table .mdl { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.inv-table .mdl .dot { width: 8px; height: 8px; border-radius: 50%; }
+.inv-table .wl { color: var(--muted-label); font-weight: 400; }
+.inv-table tbody tr { cursor: default; }
+.inv-table tr.best td { background: rgba(99,255,47,.07); }
+.inv-table tr.worst td { background: rgba(255,84,112,.06); }
+.inv-table tr.best td:first-child { box-shadow: inset 3px 0 0 var(--up); }
+.inv-table tr.worst td:first-child { box-shadow: inset 3px 0 0 var(--down); }
+
+.diverge { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.dv-row { display: grid; grid-template-columns: 110px 1fr 70px; align-items: center; gap: 12px; font-size: 12px; }
+.dv-label { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dv-track { position: relative; height: 16px; background: rgba(255,255,255,.04); border-radius: 4px; }
+.dv-mid { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: rgba(255,255,255,.18); }
+.dv-fill { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; opacity: .85; }
+.dv-val { text-align: right; font-weight: 600; }
+
+.saved-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 12px; }
+.saved-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; padding: 14px 16px; }
+.saved-name { font-size: 14px; font-weight: 600; }
+.saved-meta { font-size: 11px; color: var(--muted); margin: 4px 0 8px; }
+.saved-top { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.saved-top b { color: var(--text); }
+.saved-actions { display: flex; gap: 8px; }
+.saved-actions .auth-btn { padding: 6px 12px; font-size: 12px; }
+
+@media (max-width: 860px) {
+    .inv-panel { grid-template-columns: 1fr 1fr; }
+    .inv-highlight { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+    .inv-panel { grid-template-columns: 1fr; }
+}

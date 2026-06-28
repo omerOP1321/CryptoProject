@@ -42,3 +42,5 @@ model_audit.md
 **/.DS_Store
 
 .claude/
+
+make_admin.json
