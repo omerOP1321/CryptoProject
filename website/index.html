@@ -445,7 +445,7 @@
                 const histForModel = isV2 ? (globalPayload.prediction_history_v2 || [])
                                           : (globalPayload.prediction_history || []);
                 const stats = ChartUtils.computeModelStats(histForModel, hist5m, modelName,
-                    { fromSec, toSec, lastN: Infinity });
+                    { fromSec, toSec });
 
                 // Sparkline from this model's recent prediction history (sane points only),
                 // falling back to the candle closes so a card always shows a line.
@@ -930,7 +930,7 @@
                 LEGEND_ORDER.forEach(m => {
                     const isV2 = m.endsWith('_v2');
                     const hist = isV2 ? predHistV2 : predHist;
-                    info[m] = ChartUtils.computeModelStats(hist, hist5m, m, { fromSec, toSec, lastN: Infinity });
+                    info[m] = ChartUtils.computeModelStats(hist, hist5m, m, { fromSec, toSec });
                 });
 
                 // Aggregates

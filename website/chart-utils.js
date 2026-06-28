@@ -127,7 +127,7 @@
      */
     function computeModelStats(predHist, hist5m, modelName, opts) {
         opts = opts || {};
-        var lastN = opts.lastN === undefined ? 20 : opts.lastN;
+        var lastN = opts.lastN === undefined ? Infinity : opts.lastN;
         var fromSec = opts.fromSec === undefined ? -Infinity : opts.fromSec;
         var toSec = opts.toSec === undefined ? Infinity : opts.toSec;
         var empty = { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 };
