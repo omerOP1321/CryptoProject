@@ -445,15 +445,119 @@
 
     Auth.openModal = openModal;
 
+    // ----- accessibility widget (consistent across every page) -------------
+    // A self-contained a11y toolbar so the site offers the assistive controls
+    // expected under IS 5568 / WCAG 2.0 AA. Settings persist in localStorage
+    // and are re-applied on every page load.
+    var A11Y_KEY = 'a11ySettings';
+    var A11Y_ZOOM = [1, 1.1, 1.25, 1.4]; // text-size steps
+    function a11yLoad() {
+        try { return JSON.parse(localStorage.getItem(A11Y_KEY)) || {}; }
+        catch (e) { return {}; }
+    }
+    function a11ySave(s) {
+        try { localStorage.setItem(A11Y_KEY, JSON.stringify(s)); } catch (e) {}
+    }
+    function a11yApply(s) {
+        var root = document.documentElement, body = document.body;
+        root.classList.toggle('a11y-contrast', !!s.contrast);
+        body.classList.toggle('a11y-links', !!s.links);
+        body.classList.toggle('a11y-readable', !!s.readable);
+        body.classList.toggle('a11y-bigcursor', !!s.cursor);
+        body.classList.toggle('a11y-nomotion', !!s.motion);
+        var step = Math.min(Math.max(s.fontStep || 0, 0), A11Y_ZOOM.length - 1);
+        body.style.zoom = A11Y_ZOOM[step] === 1 ? '' : String(A11Y_ZOOM[step]);
+        // reflect toggle state for screen readers
+        var panel = document.getElementById('a11y-panel');
+        if (!panel) return;
+        ['contrast', 'links', 'readable', 'cursor', 'motion'].forEach(function (k) {
+            var btn = panel.querySelector('[data-a11y="' + k + '"]');
+            if (btn) btn.setAttribute('aria-pressed', s[k] ? 'true' : 'false');
+        });
+    }
+    function ensureA11yWidget() {
+        var s = a11yLoad();
+        if (document.getElementById('a11y-root')) { a11yApply(s); return; }
+        var person = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+            'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+            '<circle cx="12" cy="4.5" r="2"/><path d="M12 7v8"/><path d="M5 9h14"/>' +
+            '<path d="M9 21l3-6 3 6"/></svg>';
+        var items = [
+            ['font-up', 'A+ Bigger text', false],
+            ['font-down', 'A− Smaller text', false],
+            ['contrast', 'High contrast', true],
+            ['links', 'Highlight links', true],
+            ['readable', 'Readable font', true],
+            ['cursor', 'Big cursor', true],
+            ['motion', 'Stop animations', true]
+        ];
+        var grid = items.map(function (it) {
+            return '<button type="button" class="a11y-opt" data-a11y="' + it[0] + '"' +
+                (it[2] ? ' aria-pressed="false"' : '') + '>' + it[1] + '</button>';
+        }).join('');
+        var root = document.createElement('div');
+        root.id = 'a11y-root';
+        root.innerHTML =
+            '<button type="button" id="a11y-toggle" class="a11y-toggle" ' +
+                'aria-label="Accessibility menu" aria-expanded="false" aria-controls="a11y-panel">' +
+                person + '</button>' +
+            '<div id="a11y-panel" class="a11y-panel" role="dialog" aria-modal="false" ' +
+                'aria-label="Accessibility menu" hidden>' +
+                '<div class="a11y-head"><strong>Accessibility</strong>' +
+                    '<button type="button" class="a11y-close" aria-label="Close accessibility menu">×</button></div>' +
+                '<div class="a11y-grid">' + grid + '</div>' +
+                '<button type="button" class="a11y-opt a11y-reset" data-a11y="reset">Reset all</button>' +
+                '<a class="a11y-statement" href="accessibility.html">Accessibility Statement</a>' +
+            '</div>';
+        document.body.appendChild(root);
+
+        var toggle = root.querySelector('#a11y-toggle');
+        var panel = root.querySelector('#a11y-panel');
+        function open() {
+            panel.hidden = false;
+            toggle.setAttribute('aria-expanded', 'true');
+            var first = panel.querySelector('.a11y-opt'); if (first) first.focus();
+        }
+        function close(focusToggle) {
+            panel.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+            if (focusToggle) toggle.focus();
+        }
+        toggle.addEventListener('click', function () {
+            panel.hidden ? open() : close(false);
+        });
+        root.querySelector('.a11y-close').addEventListener('click', function () { close(true); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !panel.hidden) close(true);
+        });
+        document.addEventListener('click', function (e) {
+            if (!panel.hidden && !root.contains(e.target)) close(false);
+        });
+        panel.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-a11y]');
+            if (!btn) return;
+            var act = btn.dataset.a11y, st = a11yLoad();
+            if (act === 'font-up') st.fontStep = Math.min((st.fontStep || 0) + 1, A11Y_ZOOM.length - 1);
+            else if (act === 'font-down') st.fontStep = Math.max((st.fontStep || 0) - 1, 0);
+            else if (act === 'reset') st = {};
+            else st[act] = !st[act];
+            a11ySave(st);
+            a11yApply(st);
+        });
+        a11yApply(s);
+    }
+
     function init() {
         if (!sb) {
             // supabase-client.js / CDN failed to load — degrade gracefully.
             ensureHeaderArea();
+            ensureA11yWidget();
             readyResolve(null);
             return;
         }
         ensureHeaderArea();
         ensureBanner();
+        ensureA11yWidget();
         // React to confirmation / recovery links and cross-tab logout.
         sb.auth.onAuthStateChange(function () { refresh(); });
         refresh().then(function (u) { readyResolve(u); });

@@ -1411,3 +1411,75 @@ a.auth-btn { text-decoration: none; display: inline-flex; align-items: center; }
 @media (max-width: 560px) {
     .inv-panel { grid-template-columns: 1fr; }
 }
+
+/* =====================================================================
+   Accessibility widget (injected by auth.js → ensureA11yWidget)
+   Floating toolbar offering the assistive controls expected under
+   IS 5568 / WCAG 2.0 AA, plus the body/html state classes it toggles.
+   ===================================================================== */
+#a11y-root { position: fixed; left: 18px; bottom: 18px; z-index: 9999; }
+.a11y-toggle {
+    width: 48px; height: 48px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--buy); color: #fff; border: none; cursor: pointer;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+.a11y-toggle:hover { transform: scale(1.06); }
+.a11y-toggle svg { width: 26px; height: 26px; }
+.a11y-toggle:focus-visible,
+.a11y-panel button:focus-visible,
+.a11y-statement:focus-visible {
+    outline: 3px solid #fff; outline-offset: 2px;
+}
+.a11y-panel {
+    position: absolute; left: 0; bottom: 60px; width: 248px;
+    background: #0d1117; color: var(--text);
+    border: 1px solid var(--card-border); border-radius: 14px;
+    padding: 14px; box-shadow: 0 12px 36px rgba(0, 0, 0, .55);
+}
+.a11y-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.a11y-head strong { font-size: 15px; }
+.a11y-close {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 22px; line-height: 1; padding: 0 4px;
+}
+.a11y-close:hover { color: var(--text); }
+.a11y-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.a11y-opt {
+    background: var(--card-bg); color: var(--text);
+    border: 1px solid var(--card-border); border-radius: 9px;
+    padding: 9px 8px; font-size: 12.5px; cursor: pointer; text-align: center;
+    transition: background .15s ease, border-color .15s ease;
+}
+.a11y-opt:hover { background: rgba(255, 255, 255, .08); }
+.a11y-opt[aria-pressed="true"] { background: var(--buy); border-color: var(--buy); color: #fff; font-weight: 600; }
+.a11y-reset { grid-column: 1 / -1; width: 100%; margin-top: 8px; }
+.a11y-statement {
+    display: block; text-align: center; margin-top: 12px;
+    color: var(--buy); font-weight: 600; text-decoration: none; font-size: 13px;
+}
+.a11y-statement:hover { text-decoration: underline; }
+
+/* --- state classes the widget toggles ------------------------------- */
+html.a11y-contrast { filter: contrast(1.35) saturate(1.25); }
+html.a11y-contrast body { background: #000; }
+
+body.a11y-links a { text-decoration: underline !important; }
+body.a11y-links a:not(.a11y-statement):not(.a11y-toggle):not(.a11y-close) {
+    outline: 2px solid var(--up); outline-offset: 1px; border-radius: 3px;
+}
+
+body.a11y-readable,
+body.a11y-readable * { font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important; letter-spacing: .2px; }
+
+body.a11y-bigcursor, body.a11y-bigcursor * {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 24 24'%3E%3Cpath d='M4 2l7 18 2.5-7L20 11z' fill='white' stroke='black' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") 4 2, auto !important;
+}
+
+body.a11y-nomotion, body.a11y-nomotion * {
+    animation: none !important; transition: none !important; scroll-behavior: auto !important;
+}
+
+/* Accessibility statement page heading */
+.a11y-doc h1 { font-size: 26px; font-weight: 700; margin: 4px 0 14px; color: var(--text); }
