@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>About · Crypto AI Prediction</title>
-    <link rel="stylesheet" href="styles.css?v=13">
+    <link rel="stylesheet" href="styles.css?v=14">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-client.js?v=13"></script>
     <script src="auth.js?v=13"></script>
@@ -33,6 +33,10 @@
             <p style="color:var(--muted)">Loading…</p>
         </div>
 
+        <!-- Team cards. Rendered from the TEAM config in about-page.js — edit that
+             array to add / change members. No HTML changes needed here. -->
+        <div id="about-team" class="team-section"></div>
+
         <div class="footer">
             <span>This page's content is managed by an administrator.</span>
             <span><a href="index.html" class="about-link">Dashboard</a></span>
@@ -40,6 +44,6 @@
         <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
     </div>
 
-    <script src="about-page.js?v=13"></script>
+    <script src="about-page.js?v=14"></script>
 </body>
 </html>
