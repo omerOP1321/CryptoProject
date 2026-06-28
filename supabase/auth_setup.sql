@@ -215,6 +215,35 @@ create policy about_update on public.about_content
   using (public.is_editor(auth.uid()))
   with check (public.is_editor(auth.uid()));
 
+-- 5b) TEAM MEMBERS ----------------------------------------------------------
+-- Single-row table holding the About-page team cards as a JSON array, so admins
+-- can edit them from the web. Each array item is an object with free-form fields
+-- (name, role, description, emoji, accent, tags, links, ...); only `name` is
+-- required by the UI.
+create table if not exists public.team_content (
+  id         int primary key default 1 check (id = 1),
+  members    jsonb not null default '[]'::jsonb,
+  updated_by uuid references auth.users(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.team_content (id, members)
+values (1, '[]'::jsonb)
+on conflict (id) do nothing;
+
+alter table public.team_content enable row level security;
+
+-- Anyone may read the team; only admins may update it.
+drop policy if exists team_read on public.team_content;
+create policy team_read on public.team_content
+  for select to anon, authenticated using (true);
+
+drop policy if exists team_update on public.team_content;
+create policy team_update on public.team_content
+  for update to authenticated
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
 -- 6) GRANTS ------------------------------------------------------------------
 grant execute on function public.username_available(text)        to anon, authenticated;
 grant execute on function public.email_for_identifier(text)      to anon, authenticated;

@@ -1217,6 +1217,31 @@ header { gap: 12px; }
 .about-preview-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-label); margin: 12px 0 6px; }
 .about-preview { margin-top: 0; }
 
+/* ---------- Team editor (admin) ---------- */
+.team-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.team-head h2 { margin: 0 0 4px; }
+.team-head .chip { white-space: nowrap; flex: 0 0 auto; }
+
+.team-editor { margin-top: 18px; }
+.team-editor #tm-rows { display: flex; flex-direction: column; gap: 12px; margin: 14px 0; }
+.tm-row { background: rgba(0, 0, 0, .2); border: 1px solid var(--card-border); border-radius: 12px; padding: 14px; }
+.tm-row-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.tm-row-title { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.tm-row-actions { display: flex; gap: 6px; }
+.tm-row-actions .chip { padding: 4px 9px; font-size: 12px; }
+.tm-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tm-field { display: flex; flex-direction: column; gap: 4px; }
+.tm-field.tm-wide { grid-column: 1 / -1; }
+.tm-field > span { font-size: 11px; color: var(--muted); }
+.tm-field input, .tm-field textarea {
+    width: 100%; box-sizing: border-box;
+    font-family: inherit; font-size: 13px; color: var(--text); color-scheme: dark;
+    background: rgba(0, 0, 0, .25); border: 1px solid var(--card-border);
+    border-radius: 9px; padding: 8px 10px; resize: vertical;
+}
+.tm-field input:focus, .tm-field textarea:focus { outline: none; border-color: rgba(47, 157, 255, .5); }
+@media (max-width: 560px) { .tm-fields { grid-template-columns: 1fr; } }
+
 /* ==========================================================================
    USER MANAGEMENT — verify banner, verify/reset pages, admin table
    ========================================================================== */

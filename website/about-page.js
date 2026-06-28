@@ -11,12 +11,16 @@
     var adminEl = document.getElementById('about-admin');
     var teamEl = document.getElementById('about-team');
     var current = '';
+    var teamData = [];        // live team, loaded from DB (falls back to DEFAULT_TEAM)
+    var teamLoaded = false;   // becomes true once the DB fetch resolves
 
     /* =========================================================================
-       TEAM MEMBERS — EDIT HERE
+       TEAM MEMBERS
        -------------------------------------------------------------------------
-       Add, remove or edit a card by changing this array. The grid lays out
-       automatically (no HTML/CSS edits needed). Per-member fields:
+       Cards are stored in the database (team_content table) and editable from
+       the web by an admin via the "✎ Edit team" button. This array is only the
+       DEFAULT / fallback seed used when the DB has no team rows yet (or can't be
+       reached). Per-member fields:
 
          name        (required)  — full name, shown as the card title
          role        (optional)  — short title under the name
@@ -28,7 +32,7 @@
 
        Only `name` is required; omit any field you don't need.
        ========================================================================= */
-    var TEAM = [
+    var DEFAULT_TEAM = [
         {
             name: 'Dr. Ronen Almog',
             role: 'Project Supervisor',
@@ -144,42 +148,194 @@
         return (first + last).toUpperCase();
     }
 
-    // Build the team section from the TEAM config. Everything is escaped, so
-    // editing the config can never inject HTML.
+    // Only admins may edit the team (DB RLS enforces it; this mirrors it so the
+    // button only shows when the save would actually succeed).
+    function canEditTeam() { return !!(A && A.isAdmin && A.isAdmin()); }
+
+    // Load the team from the DB. Falls back to DEFAULT_TEAM when the DB is empty
+    // or unreachable so the section is never blank.
+    async function loadTeam() {
+        try {
+            var data = await A.getTeam();
+            teamData = (data && Array.isArray(data.members) && data.members.length)
+                ? data.members : DEFAULT_TEAM.slice();
+        } catch (e) {
+            teamData = DEFAULT_TEAM.slice();
+        }
+        teamLoaded = true;
+        renderTeam();
+    }
+
+    // Build the team section from teamData. Everything is escaped, so stored
+    // content can never inject HTML.
     function renderTeam() {
         if (!teamEl) return;
-        if (!TEAM.length) { teamEl.innerHTML = ''; return; }
+        var editBtn = canEditTeam()
+            ? '<button class="chip" id="team-edit">✎ Edit team</button>' : '';
         var html = '<div class="about team-block">' +
-            '<h2>' + escapeHtml(TEAM_HEADING) + '</h2>';
-        if (TEAM_SUBTITLE) html += '<p class="about-sub">' + escapeHtml(TEAM_SUBTITLE) + '</p>';
-        html += '<div class="team-grid">';
-        TEAM.forEach(function (m) {
-            if (!m || !m.name) return;
-            var accent = m.accent ? escapeHtml(m.accent) : 'var(--buy)';
-            var avatar = m.emoji ? escapeHtml(m.emoji) : escapeHtml(initials(m.name));
-            html += '<div class="team-card">';
-            html += '<div class="tc-avatar" style="--tc-accent:' + accent + '">' + avatar + '</div>';
-            html += '<div class="tc-name">' + escapeHtml(m.name) + '</div>';
-            if (m.role) html += '<div class="tc-role">' + escapeHtml(m.role) + '</div>';
-            if (m.description) html += '<div class="tc-desc">' + escapeHtml(m.description) + '</div>';
-            if (m.tags && m.tags.length) {
-                html += '<div class="tc-tags">';
-                m.tags.forEach(function (t) { html += '<span class="tc-tag">' + escapeHtml(t) + '</span>'; });
+            '<div class="team-head">' +
+                '<div><h2>' + escapeHtml(TEAM_HEADING) + '</h2>' +
+                    (TEAM_SUBTITLE ? '<p class="about-sub">' + escapeHtml(TEAM_SUBTITLE) + '</p>' : '') +
+                '</div>' + editBtn +
+            '</div>';
+        var members = teamData.filter(function (m) { return m && m.name; });
+        if (!members.length) {
+            html += '<p class="about-sub">No team members yet.</p>';
+        } else {
+            html += '<div class="team-grid">';
+            members.forEach(function (m) {
+                var accent = m.accent ? escapeHtml(m.accent) : 'var(--buy)';
+                var avatar = m.emoji ? escapeHtml(m.emoji) : escapeHtml(initials(m.name));
+                html += '<div class="team-card">';
+                html += '<div class="tc-avatar" style="--tc-accent:' + accent + '">' + avatar + '</div>';
+                html += '<div class="tc-name">' + escapeHtml(m.name) + '</div>';
+                if (m.role) html += '<div class="tc-role">' + escapeHtml(m.role) + '</div>';
+                if (m.description) html += '<div class="tc-desc">' + escapeHtml(m.description) + '</div>';
+                var tags = normTags(m.tags);
+                if (tags.length) {
+                    html += '<div class="tc-tags">';
+                    tags.forEach(function (t) { html += '<span class="tc-tag">' + escapeHtml(t) + '</span>'; });
+                    html += '</div>';
+                }
+                if (m.links && m.links.length) {
+                    html += '<div class="tc-links">';
+                    m.links.forEach(function (lnk) {
+                        if (!lnk || !lnk.href) return;
+                        html += '<a class="tc-link" href="' + escapeHtml(lnk.href) + '" target="_blank" rel="noopener">' +
+                            escapeHtml(lnk.label || lnk.href) + '</a>';
+                    });
+                    html += '</div>';
+                }
                 html += '</div>';
-            }
-            if (m.links && m.links.length) {
-                html += '<div class="tc-links">';
-                m.links.forEach(function (lnk) {
-                    if (!lnk || !lnk.href) return;
-                    html += '<a class="tc-link" href="' + escapeHtml(lnk.href) + '" target="_blank" rel="noopener">' +
-                        escapeHtml(lnk.label || lnk.href) + '</a>';
-                });
-                html += '</div>';
-            }
+            });
             html += '</div>';
-        });
-        html += '</div></div>';
+        }
+        html += '</div>';
         teamEl.innerHTML = html;
+        var btn = document.getElementById('team-edit');
+        if (btn) btn.onclick = openTeamEditor;
+    }
+
+    // tags can be stored as an array or a comma string; normalise to an array.
+    function normTags(t) {
+        if (Array.isArray(t)) return t.filter(Boolean);
+        if (typeof t === 'string') return t.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+        return [];
+    }
+
+    // ----- admin team editor (structured form) ------------------------------
+    function memberRow(m, i) {
+        m = m || {};
+        return '<div class="tm-row" data-i="' + i + '">' +
+            '<div class="tm-row-head">' +
+                '<span class="tm-row-title">Member ' + (i + 1) + '</span>' +
+                '<span class="tm-row-actions">' +
+                    '<button type="button" class="chip tm-up" title="Move up">↑</button>' +
+                    '<button type="button" class="chip tm-down" title="Move down">↓</button>' +
+                    '<button type="button" class="chip tm-del" title="Remove">✕</button>' +
+                '</span>' +
+            '</div>' +
+            '<div class="tm-fields">' +
+                tmField('Name', 'name', m.name, 'Full name') +
+                tmField('Role', 'role', m.role, 'e.g. Frontend Engineer') +
+                tmField('Emoji', 'emoji', m.emoji, 'optional, e.g. 🎓') +
+                tmField('Accent colour', 'accent', m.accent, 'e.g. #2f9dff') +
+                tmField('Tags', 'tags', normTags(m.tags).join(', '), 'comma separated') +
+                '<label class="tm-field tm-wide"><span>Description</span>' +
+                    '<textarea data-f="description" rows="2" placeholder="One or two sentences">' +
+                    escapeHtml(m.description || '') + '</textarea></label>' +
+            '</div>' +
+        '</div>';
+    }
+    function tmField(label, key, val, ph) {
+        return '<label class="tm-field"><span>' + escapeHtml(label) + '</span>' +
+            '<input type="text" data-f="' + key + '" value="' + escapeHtml(val || '') +
+            '" placeholder="' + escapeHtml(ph || '') + '"></label>';
+    }
+
+    function openTeamEditor() {
+        if (!teamEl) return;
+        var draft = teamData.map(function (m) { return Object.assign({}, m); });
+
+        function render() {
+            var rows = draft.map(memberRow).join('');
+            teamEl.innerHTML =
+                '<div class="about team-editor">' +
+                    '<div class="about-editor-head"><span>Editing team</span>' +
+                        '<span class="about-editor-actions">' +
+                            '<button class="chip" id="tm-cancel">Cancel</button>' +
+                            '<button class="chip active" id="tm-save">Save</button>' +
+                        '</span></div>' +
+                    '<div id="tm-rows">' + rows + '</div>' +
+                    '<button class="chip" id="tm-add">+ Add member</button>' +
+                    '<div class="about-edit-err" id="tm-err"></div>' +
+                '</div>';
+            wire();
+        }
+
+        // Pull the current form values back into the draft array.
+        function sync() {
+            var rowEls = teamEl.querySelectorAll('.tm-row');
+            rowEls.forEach(function (row) {
+                var i = +row.getAttribute('data-i');
+                var obj = draft[i] || (draft[i] = {});
+                row.querySelectorAll('[data-f]').forEach(function (inp) {
+                    var f = inp.getAttribute('data-f');
+                    var v = inp.value.trim();
+                    if (f === 'tags') obj.tags = normTags(v);
+                    else if (v) obj[f] = v; else delete obj[f];
+                });
+            });
+        }
+
+        function wire() {
+            document.getElementById('tm-add').onclick = function () {
+                sync(); draft.push({ name: '' }); render();
+            };
+            document.getElementById('tm-cancel').onclick = function () { renderTeam(); };
+            teamEl.querySelectorAll('.tm-del').forEach(function (b) {
+                b.onclick = function () {
+                    sync();
+                    var i = +b.closest('.tm-row').getAttribute('data-i');
+                    draft.splice(i, 1); render();
+                };
+            });
+            teamEl.querySelectorAll('.tm-up').forEach(function (b) {
+                b.onclick = function () {
+                    sync();
+                    var i = +b.closest('.tm-row').getAttribute('data-i');
+                    if (i > 0) { var t = draft[i - 1]; draft[i - 1] = draft[i]; draft[i] = t; }
+                    render();
+                };
+            });
+            teamEl.querySelectorAll('.tm-down').forEach(function (b) {
+                b.onclick = function () {
+                    sync();
+                    var i = +b.closest('.tm-row').getAttribute('data-i');
+                    if (i < draft.length - 1) { var t = draft[i + 1]; draft[i + 1] = draft[i]; draft[i] = t; }
+                    render();
+                };
+            });
+            document.getElementById('tm-save').onclick = async function () {
+                sync();
+                var errEl = document.getElementById('tm-err');
+                errEl.textContent = '';
+                var clean = draft.filter(function (m) { return m && m.name; });
+                if (!clean.length) { errEl.textContent = 'Add at least one member (name required).'; return; }
+                var btn = document.getElementById('tm-save');
+                btn.disabled = true;
+                try {
+                    var data = await A.saveTeam(clean);
+                    teamData = (data && data.members) || clean;
+                    renderTeam();
+                } catch (e) {
+                    errEl.textContent = e.message || 'Save failed';
+                    btn.disabled = false;
+                }
+            };
+        }
+
+        render();
     }
 
     function renderAdminBar() {
@@ -230,12 +386,17 @@
         };
     }
 
+    // Show defaults immediately, then hydrate from the DB.
+    teamData = DEFAULT_TEAM.slice();
     renderTeam();
     if (!A) {
         if (contentEl) contentEl.innerHTML = renderMarkdown(DEFAULT_ABOUT);
         return;
     }
     load();
-    A.ready.then(renderAdminBar);
-    A.on(renderAdminBar);
+    loadTeam();
+    // Re-render the admin controls + team edit button when auth state changes.
+    function onAuth() { renderAdminBar(); if (teamLoaded) renderTeam(); }
+    A.ready.then(onAuth);
+    A.on(onAuth);
 }());

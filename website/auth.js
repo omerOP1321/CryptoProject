@@ -178,6 +178,19 @@
         if (out.error) throw new Error(out.error.message || 'Save failed');
         return { content: out.data.content };
     };
+    // Team cards (About page). Anyone may read; only admins may save (RLS).
+    Auth.getTeam = async function () {
+        var out = await sb.from('team_content').select('members').eq('id', 1).single();
+        if (out.error) throw new Error('Could not load team.');
+        return { members: (out.data && out.data.members) || [] };
+    };
+    Auth.saveTeam = async function (members) {
+        var out = await sb.from('team_content')
+            .update({ members: members, updated_by: Auth.user && Auth.user.id, updated_at: new Date().toISOString() })
+            .eq('id', 1).select('members').single();
+        if (out.error) throw new Error(out.error.message || 'Save failed');
+        return { members: out.data.members };
+    };
 
     function renderUI() { renderHeader(); renderBanner(); }
 
