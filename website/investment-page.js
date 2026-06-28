@@ -42,6 +42,7 @@
     function colorOf(m) { return MODELS.colors[m] || '#3b9eff'; }
     function labelOf(m) { return MODELS.labelOf(m); }
     function isoDay(sec) { return new Date(sec * 1000).toISOString().slice(0, 10); }
+    function isoTime(sec) { return new Date(sec * 1000).toISOString().slice(11, 16); }
 
     // ---- backend call ------------------------------------------------------
     async function invoke(body) {
@@ -61,13 +62,33 @@
         return res.data;
     }
 
+    // Combine a date input (YYYY-MM-DD) with its time input (HH:MM) into a unix
+    // second. Times are interpreted as UTC so the value matches the backend,
+    // which filters candles by raw unix seconds (timezone-agnostic).
+    //   edge='start' + empty time -> 00:00:00 (start of day)
+    //   edge='end'   + empty time -> 24:00    (end of day, i.e. 23:59:59)
+    function combineDateTime(dateVal, timeVal, edge) {
+        if (!dateVal) return undefined;
+        var sec;
+        if (timeVal) {
+            sec = Date.parse(dateVal + 'T' + timeVal + ':00Z') / 1000;
+        } else if (edge === 'end') {
+            sec = Date.parse(dateVal + 'T23:59:59Z') / 1000; // 24:00 default
+        } else {
+            sec = Date.parse(dateVal + 'T00:00:00Z') / 1000;
+        }
+        return Number.isFinite(sec) ? Math.floor(sec) : undefined;
+    }
+
     function params() {
         var amount = parseFloat(document.getElementById('inv-amount').value);
-        var startEl = document.getElementById('inv-start');
-        var endEl = document.getElementById('inv-end');
         var body = { coin: state.coin, initialAmount: amount };
-        if (startEl.value) body.startDate = Math.floor(Date.parse(startEl.value + 'T00:00:00Z') / 1000);
-        if (endEl.value) body.endDate = Math.floor(Date.parse(endEl.value + 'T23:59:59Z') / 1000);
+        var s = combineDateTime(document.getElementById('inv-start').value,
+            document.getElementById('inv-start-time').value, 'start');
+        var e = combineDateTime(document.getElementById('inv-end').value,
+            document.getElementById('inv-end-time').value, 'end');
+        if (s !== undefined) body.startDate = s;
+        if (e !== undefined) body.endDate = e;
         if (state.mode === 'allocation') body.allocation = readAllocation();
         return body;
     }
@@ -322,8 +343,16 @@
         var p = s.params || {};
         setCoin(p.coin || 'BTCUSDT');
         document.getElementById('inv-amount').value = p.initialAmount || 1000;
-        if (p.startDate) document.getElementById('inv-start').value = isoDay(Number(p.startDate) || Date.parse(p.startDate) / 1000);
-        if (p.endDate) document.getElementById('inv-end').value = isoDay(Number(p.endDate) || Date.parse(p.endDate) / 1000);
+        if (p.startDate) {
+            var ss = Number(p.startDate) || Date.parse(p.startDate) / 1000;
+            document.getElementById('inv-start').value = isoDay(ss);
+            document.getElementById('inv-start-time').value = isoTime(ss);
+        }
+        if (p.endDate) {
+            var es = Number(p.endDate) || Date.parse(p.endDate) / 1000;
+            document.getElementById('inv-end').value = isoDay(es);
+            document.getElementById('inv-end-time').value = isoTime(es);
+        }
         setMode(p.allocation && p.allocation.length ? 'allocation' : 'single');
         if (p.allocation) p.allocation.forEach(function (a) {
             var el = document.getElementById('alloc-' + a.model); if (el) el.value = Math.round(a.weight * 100);
@@ -357,6 +386,9 @@
         if (state.mode === 'allocation' && (!p.allocation || !p.allocation.length)) {
             alert('Give at least one model a non-zero allocation.'); return;
         }
+        if (p.startDate !== undefined && p.endDate !== undefined && p.startDate > p.endDate) {
+            alert('Start must be before end.'); return;
+        }
         setBusy(true);
         try {
             var data = await invoke(p);
@@ -387,7 +419,8 @@
         s.min = lo; s.max = hi; e.min = lo; e.max = hi;
         if (!s.value) s.value = lo;
         if (!e.value) e.value = hi;
-        document.getElementById('inv-range-note').textContent = 'Data available ' + lo + ' → ' + hi;
+        document.getElementById('inv-range-note').textContent =
+            'Data available ' + lo + ' → ' + hi + ' (UTC · empty end time = 24:00)';
     }
 
     function setCoin(coin) {
@@ -399,6 +432,8 @@
         state.bounds = null;
         document.getElementById('inv-start').value = '';
         document.getElementById('inv-end').value = '';
+        document.getElementById('inv-start-time').value = '';
+        document.getElementById('inv-end-time').value = '';
         document.getElementById('inv-range-note').textContent = 'Press Calculate to load ' + coin + ' data range';
     }
     function setMode(mode) {

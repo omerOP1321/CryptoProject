@@ -1127,6 +1127,9 @@ a.auth-btn { text-decoration: none; display: inline-flex; align-items: center; }
     border-radius: 10px; padding: 10px 12px; color-scheme: dark; width: 100%;
 }
 .inv-input:focus { outline: none; border-color: var(--buy); }
+.dt-row { display: flex; gap: 8px; }
+.dt-row .inv-input { min-width: 0; }
+.dt-time { flex: 0 0 108px; }
 .inv-field .coin-tabs { gap: 8px; }
 
 .seg { display: inline-flex; background: rgba(255,255,255,.04); border: 1px solid var(--card-border); border-radius: 10px; padding: 3px; gap: 3px; }

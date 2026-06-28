@@ -46,12 +46,18 @@
                 <input type="number" id="inv-amount" min="1" step="100" value="1000" class="inv-input">
             </div>
             <div class="inv-field">
-                <label for="inv-start">Start date</label>
-                <input type="date" id="inv-start" class="inv-input">
+                <label for="inv-start">Start (date &amp; time)</label>
+                <div class="dt-row">
+                    <input type="date" id="inv-start" class="inv-input">
+                    <input type="time" id="inv-start-time" class="inv-input dt-time" title="Empty = 00:00 (start of day)">
+                </div>
             </div>
             <div class="inv-field">
-                <label for="inv-end">End date</label>
-                <input type="date" id="inv-end" class="inv-input">
+                <label for="inv-end">End (date &amp; time)</label>
+                <div class="dt-row">
+                    <input type="date" id="inv-end" class="inv-input">
+                    <input type="time" id="inv-end-time" class="inv-input dt-time" title="Empty = 24:00 (end of day)" placeholder="24:00">
+                </div>
             </div>
 
             <div class="inv-field full">
