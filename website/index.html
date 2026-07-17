@@ -9,10 +9,10 @@
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-client.js?v=13"></script>
-    <script src="chart-utils.js?v=13"></script>
+    <script src="chart-utils.js?v=14"></script>
     <script src="analytics-ui.js?v=13"></script>
     <script src="auth.js?v=19"></script>
-    <link rel="stylesheet" href="styles.css?v=15">
+    <link rel="stylesheet" href="styles.css?v=16">
 </head>
 <body>
     <div class="blob b1"></div>
@@ -89,6 +89,8 @@
                     </div>
                 </div>
 
+                <div class="outage-note" id="outage-note" style="display: none;"></div>
+
                 <div class="custom-range" id="custom-range-inputs" style="display: none;">
                     <input type="datetime-local" id="custom-from">
                     <span class="control-label">to</span>
@@ -151,6 +153,10 @@
         let chartInstance = null;
         let candlestickSeries = null;
         let activeModelSeries = [];
+        // Markers plugin for the outage labels. Lives and dies with candlestickSeries
+        // (reset where that series is created), so a chart rebuild can't leave a stale
+        // handle pointing at a removed series.
+        let outageMarkersPlugin = null;
         let lastRenderKey = '';
         let lastBarCount = 0;
 
@@ -254,9 +260,31 @@
         if (isSetupComplete) {
             const supabase = window.sb || window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
-            async function fetchPredictions() {
+            // Last payload actually downloaded, so the 30s tick can skip re-downloading
+            // one that hasn't changed. Tracked with the coin id: every coin's payload
+            // carries the same candle timestamp, so the timestamp alone would wrongly
+            // match right after switching coins.
+            let lastPayloadId = null, lastPayloadTs = null;
+
+            async function fetchPredictions(force = false) {
                 try {
                     console.log(`[${new Date().toLocaleTimeString()}] Querying row id: ${activeCoinId} for ${activeCoin}`);
+
+                    // The engine only publishes every 5 minutes, so downloading the whole
+                    // ~458KB (gzipped) payload on every 30s tick spent ~55MB per visitor-hour
+                    // of Supabase egress - the quota it feeds is what restricted the project
+                    // and froze this dashboard 12-15 Jul. Probe just the payload's timestamp
+                    // (37 bytes) and only pull the row when it has actually moved.
+                    if (!force && lastPayloadId === activeCoinId) {
+                        const { data: probe, error: probeErr } = await supabase
+                            .from('predictions')
+                            .select('payload->>timestamp')
+                            .eq('id', activeCoinId)
+                            .neq('id', Math.floor(Math.random() * 10000000))
+                            .single();
+                        if (!probeErr && probe && probe.timestamp === lastPayloadTs) return;
+                    }
+
                     const { data, error } = await supabase
                         .from('predictions')
                         .select('payload')
@@ -274,6 +302,8 @@
 
                     if (data && data.payload) {
                         globalPayload = data.payload;
+                        lastPayloadId = activeCoinId;
+                        lastPayloadTs = data.payload.timestamp;
 
                         const syncElem = document.getElementById('last-sync');
                         const payloadTime = new Date(data.payload.timestamp.replace(' ', 'T') + 'Z');
@@ -310,7 +340,7 @@
                 lastRenderKey = '';
                 _lastTop = null;   // different model set per coin; don't cross-notify
 
-                fetchPredictions();
+                fetchPredictions(true);   // different row; the probe can't tell us that
             }
 
             function rangeWindow(dataEndSec) {
@@ -663,6 +693,7 @@
                         wickUpColor: '#63ff2f',
                         wickDownColor: '#ff5470'
                     });
+                    outageMarkersPlugin = null;   // new series => old handle is dead
                 } else {
                     activeModelSeries.forEach(series => {
                         try { chartInstance.removeSeries(series); } catch (e) {}
@@ -680,6 +711,45 @@
 
                 candlestickSeries.setData(formattedHistory);
                 lastBarCount = formattedHistory.length;
+
+                // Label service outages. The prediction line already breaks at a gap,
+                // but an unlabelled break looks like the models fell silent, when in
+                // fact the engine ran the whole time and the database refused the
+                // writes. Attached to the candle series (which outlives model series)
+                // via a single plugin handle, reused across renders so markers cannot
+                // pile up - the candle series is never removed.
+                const outages = ChartUtils.findOutages(globalPayload.prediction_history, 3600)
+                    .filter(o => o.toSec >= rangeFromSec && o.fromSec <= rangeToSec);
+                const outageMarkers = [];
+                outages.forEach(o => {
+                    const label = ChartUtils.formatOutage(o.durationSec);
+                    outageMarkers.push({
+                        time: o.fromSec, position: 'aboveBar', color: '#f5a623',
+                        shape: 'arrowDown', text: `Service outage — no predictions (${label})`
+                    });
+                    outageMarkers.push({
+                        time: o.toSec, position: 'aboveBar', color: '#f5a623',
+                        shape: 'arrowUp', text: 'Predictions resume'
+                    });
+                });
+                if (outageMarkersPlugin) {
+                    outageMarkersPlugin.setMarkers(outageMarkers);
+                } else if (outageMarkers.length) {
+                    outageMarkersPlugin =
+                        LightweightCharts.createSeriesMarkers(candlestickSeries, outageMarkers);
+                }
+                const outageNote = document.getElementById('outage-note');
+                if (outageNote) {
+                    if (outages.length) {
+                        const total = outages.reduce((s, o) => s + o.durationSec, 0);
+                        outageNote.textContent =
+                            `⚠ ${ChartUtils.formatOutage(total)} of predictions missing in this range` +
+                            ` — engine was running; the database rejected the writes. Statistics exclude this period.`;
+                        outageNote.style.display = 'block';
+                    } else {
+                        outageNote.style.display = 'none';
+                    }
+                }
 
                 const lastCandle = formattedHistory[formattedHistory.length - 1];
                 const lastTime = lastCandle.time;
@@ -1092,8 +1162,8 @@
             updatePriceLinesButton();
             populateRangeSelect();
             updateRangeButtons();
-            fetchPredictions();
-            setInterval(fetchPredictions, 30000);
+            fetchPredictions(true);
+            setInterval(() => fetchPredictions(), 30000);
         } else {
             document.getElementById('setup').style.display = 'block';
             document.getElementById('loading').style.display = 'none';

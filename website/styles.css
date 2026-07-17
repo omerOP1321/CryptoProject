@@ -393,6 +393,19 @@ header {
 }
 .chart-head-left { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .chart-title { font-size: 15px; font-weight: 600; }
+/* Banner naming a service outage inside the visible range, so a break in the
+   prediction line reads as missing data rather than as models falling silent. */
+.outage-note {
+    margin: 8px 0 0;
+    padding: 8px 12px;
+    border: 1px solid rgba(245, 166, 35, .35);
+    border-left: 3px solid #f5a623;
+    border-radius: 6px;
+    background: rgba(245, 166, 35, .08);
+    color: #f5c76a;
+    font-size: 12px;
+    line-height: 1.5;
+}
 .range-seg {
     display: flex; gap: 4px;
     padding: 4px;
