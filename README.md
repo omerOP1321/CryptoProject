@@ -268,10 +268,11 @@ More expressive architecture
 Slightly more stable validation behavior
 Still limited by noisy financial targets
 🚀 Future Improvements
-Predict log-returns instead of %B
-Use trading-based loss (PnL optimization)
-Add attention visualization for TFT
-Convert pipeline into full backtesting engine
+Longer prediction horizons (15–60 min): reduce microstructure noise where short-horizon targets are near-random, improving signal-to-noise and directional accuracy
+Richer feature set: order-flow imbalance, market-microstructure features, and on-chain metrics (exchange flows, active addresses) beyond OHLCV
+Walk-forward retraining with PnL-aware loss: rolling-window retraining to measure and adapt to concept drift; optimize a trading objective instead of pure MSE
+Risk-aware inference: cost-aware position sizing (fees/slippage), abstain-when-uncertain logic, and conformal prediction intervals for calibrated confidence
+Full backtesting engine: event-driven backtester to validate strategies under realistic execution assumptions
 
 ---
 ## 🔍 Inference / Prediction
