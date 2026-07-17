@@ -132,7 +132,7 @@
 
         let activeCoin = 'BTCUSDT';
         let activeCoinId = 1;
-        let visibleModels = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
+        let visibleModels = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'];
         let statsOpen = false;
 
         // Time range selection. All ranges render 5-minute candles. The backend now
@@ -172,7 +172,8 @@
             'Transformer': '#e25bd0',    // magenta
             'ARIMA': '#22d3ee',          // cyan (leading)
             'LSTM_v2': '#f5a524',        // amber (challenger)
-            'Transformer_v2': '#818cf8'  // indigo (challenger)
+            'Transformer_v2': '#818cf8', // indigo (challenger)
+            'ARIMA_v2': '#34d399'        // emerald (1H baseline)
         };
 
         const MODEL_LABELS = {
@@ -180,17 +181,18 @@
             'Transformer': 'TFT (5M)',
             'ARIMA': 'ARIMA',
             'LSTM_v2': 'LSTM (1H)',
-            'Transformer_v2': 'TFT (1H)'
+            'Transformer_v2': 'TFT (1H)',
+            'ARIMA_v2': 'ARIMA (1H)'
         };
         const MODEL_TAGS = {
             'LSTM': 'Legacy', 'Transformer': 'Legacy', 'ARIMA': 'Base',
-            'LSTM_v2': 'V2', 'Transformer_v2': 'V2'
+            'LSTM_v2': 'V2', 'Transformer_v2': 'V2', 'ARIMA_v2': 'Base'
         };
         const labelOf = m => MODEL_LABELS[m] || m;
 
         // Card / legend ordering. The leading model is chosen dynamically at render time.
-        const ALL_MODELS = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
-        const LEGEND_ORDER = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'];
+        const ALL_MODELS = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'];
+        const LEGEND_ORDER = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'];
 
         const COIN_META = {
             'BTCUSDT': { name: 'Bitcoin', sym: 'BTC' },
@@ -635,8 +637,9 @@
                     deltaEl.innerText = '';
                 }
                 const meta = COIN_META[activeCoin] || { name: activeCoin };
+                const nModels = ALL_MODELS.filter(m => (globalPayload.predictions || {})[m]).length;
                 document.getElementById('market-note').innerText =
-                    `${meta.name} · 5 models · updates every 30s`;
+                    `${meta.name} · ${nModels} models · updates every 30s`;
 
                 // Cards + legend
                 renderModelCards(rangeFromSec, rangeToSec, hist5m, formattedHistory, lastPrice);

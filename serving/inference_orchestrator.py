@@ -739,6 +739,33 @@ def infer_arima(close_series):
             print(f"   -> ARIMA fitting failed: {e}")
             return None
 
+
+def infer_arima_hourly(df_upto_hour):
+    """1-hour ARIMA baseline. Resample the 5-min history up to the current clock
+    hour into 1h candles and forecast the NEXT hourly close (one step = 60 min).
+
+    Mirrors infer_arima exactly (same ARIMA(2,1,0) order, fit online each cycle,
+    no saved artifact) but on the hourly grid, so its horizon matches the v2
+    challengers' 60-min series. Fitting on the 1h close series - rather than
+    forecasting 12 steps on the 5-min series - keeps the model's noise/signal at
+    the horizon it is scored against, the same reasoning behind the 5-min
+    infer_arima using steps=1.
+
+    df_upto_hour: history filtered to open_time <= the hour anchor (see
+    run_inference), so the forecast is reproducible for every 5-min cycle within
+    the hour. Returns the forecast price, or None if ARIMA can't fit / too little
+    data.
+    """
+    try:
+        s = (df_upto_hour.set_index('open_time')['close']
+             .resample('1h').last().dropna())
+    except Exception as e:
+        print(f"   -> Hourly ARIMA resample failed: {e}")
+        return None
+    if len(s) < 30:
+        return None
+    return infer_arima(s.tail(SEQ_LENGTH).reset_index(drop=True))
+
 def load_training_artifacts(symbol, tag):
     """Load the StandardScaler + feature list saved by preprocessing for
     (symbol, tag) where tag is 'lstm' or 'tft'. Using the exact training scaler
@@ -1233,21 +1260,55 @@ def run_inference(symbol, db_id):
     else:
         results["chosen_model"] = "None"
 
-    # 7b. Challenger v2 predictions (return-based price + direction head). Additive
-    # and fully guarded so any v2 error never blocks the legacy push. Deliberately
-    # computed AFTER the Ensemble above so the champion ensemble is unchanged.
+    # 7b. Hourly-horizon (60-min) predictions -> the separate prediction_history_v2
+    # series. Two producers share the same clock-hour grid: the v2 neural
+    # challengers and the ARIMA_v2 statistical baseline. All additive and fully
+    # guarded so any error here never blocks the legacy push, and computed AFTER
+    # the Ensemble above so the champion ensemble is unchanged.
+    #
+    # Anchor every 60-min forecast to the CLOCK-HOUR grid: base the prediction on the
+    # candle at the most recent hour boundary and forecast the NEXT hour boundary. So a
+    # run started at 06:23 still forecasts 06:00 -> 07:00, and every 5-min cycle within
+    # that hour reproduces the same point (deduped by target time).
     v2_hist_entries = {}      # 5-min-horizon v2 -> shares the legacy history
-    v2_60m_entries = {}       # longer-horizon v2 -> its own history series
+    v2_60m_entries = {}       # 60-min-horizon models -> the v2 history series
     v2_target_time = None     # hour-aligned target timestamp for the v2 series
+    last_time_dt = pd.Timestamp(df_hist['open_time'].iloc[-1])
+    hour_anchor = last_time_dt.floor('h')
+    hour_key = int(hour_anchor.timestamp())
+    df_anchor = df_hist[df_hist['open_time'] <= hour_anchor]
+
+    # 7b-i. ARIMA_v2 (1-hour statistical baseline). Fit once per clock hour from the
+    # hour anchor and reuse the cached result for the rest of the hour's cycles.
+    # Runs independently of the v2 neural models so it works even with no v2 artifacts.
+    try:
+        ck_arima = (symbol, 'ARIMA_v2', hour_key)
+        arima_h = v2_pred_cache.get(ck_arima)
+        if arima_h is None and len(df_anchor) >= 50:
+            price_h = infer_arima_hourly(df_anchor)
+            if price_h is not None:
+                arima_h = {"price": float(price_h), "base": float(df_anchor['close'].iloc[-1])}
+                for k in list(v2_pred_cache):        # drop stale-hour entries
+                    if k[2] != hour_key:
+                        del v2_pred_cache[k]
+                v2_pred_cache[ck_arima] = arima_h
+                print(f"   -> ARIMA_v2 forecast computed for "
+                      f"{hour_anchor.strftime('%H:%M')} -> "
+                      f"{(hour_anchor + pd.Timedelta(minutes=60)).strftime('%H:%M')}")
+        if arima_h is not None:
+            base_h, price_h = arima_h["base"], arima_h["price"]
+            results["predictions"]["ARIMA_v2"] = {
+                "val": price_h, "price": price_h,
+                "change_pct": (price_h - base_h) / base_h * 100,
+                "horizon_min": 60,
+            }
+            v2_60m_entries["ARIMA_v2"] = price_h
+            v2_target_time = hour_key + 60 * 60
+    except Exception as e:
+        print(f"   -> ARIMA_v2 inference failed: {e}")
+
+    # 7b-ii. v2 neural challengers (return-based price + direction head).
     if symbol in models_v2_dict:
-        # Anchor longer-horizon (e.g. 60-min) forecasts to the CLOCK-HOUR grid: base the
-        # prediction on the candle at the most recent hour boundary and forecast the NEXT
-        # hour boundary. So a run started at 06:23 still forecasts 06:00 -> 07:00, and every
-        # 5-min cycle within that hour reproduces the same point (deduped by target time).
-        last_time_dt = pd.Timestamp(df_hist['open_time'].iloc[-1])
-        hour_anchor = last_time_dt.floor('h')
-        hour_key = int(hour_anchor.timestamp())
-        df_anchor = df_hist[df_hist['open_time'] <= hour_anchor]
         for mt, name in (('lstm', 'LSTM_v2'), ('tft', 'Transformer_v2')):
             entry = models_v2_dict[symbol].get(mt)
             if not entry:
