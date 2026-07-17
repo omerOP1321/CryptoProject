@@ -77,6 +77,44 @@
     }
 
     /*
+     * Find service outages in a prediction series: stretches where the engine
+     * published nothing for at least minGapSec.
+     *
+     * splitAtGaps() already stops the chart drawing a line across these, but an
+     * unlabelled break reads as "the models had nothing to say" when the truth is
+     * "the data never reached the database". The 2026-07-12..15 outage is the real
+     * case: the engine predicted every 5 minutes throughout, and Supabase rejected
+     * all 986 cycles with 402 exceed_egress_quota. Those predictions are gone and
+     * cannot be honestly reconstructed, so the gap is permanent and worth naming.
+     *
+     * Derived from the data rather than hardcoded to that incident, so any future
+     * outage labels itself. Returns [{ fromSec, toSec, durationSec }].
+     */
+    function findOutages(predHist, minGapSec) {
+        var minGap = minGapSec || 3600;
+        if (!Array.isArray(predHist)) return [];
+        var times = predHist
+            .map(function (e) { return Number(e && e.time); })
+            .filter(function (t) { return Number.isFinite(t); })
+            .sort(function (a, b) { return a - b; });
+        var out = [];
+        for (var i = 1; i < times.length; i++) {
+            var gap = times[i] - times[i - 1];
+            if (gap >= minGap) {
+                out.push({ fromSec: times[i - 1], toSec: times[i], durationSec: gap });
+            }
+        }
+        return out;
+    }
+
+    /* Human-readable outage length, e.g. "82h" / "75min" / "3.4 days". */
+    function formatOutage(sec) {
+        if (sec >= 86400) return (sec / 86400).toFixed(1) + ' days';
+        if (sec >= 3600) return Math.round(sec / 3600) + 'h';
+        return Math.round(sec / 60) + 'min';
+    }
+
+    /*
      * Average relative error (%) of a model's matured predictions.
      * predHist entries: { time: <target unix sec>, <modelName>: <predicted price> }
      * hist5m entries:   { time: <candle open unix sec>, c: <close> }
@@ -514,6 +552,8 @@
         computeModelErrors: computeModelErrors,
         computeModelStats: computeModelStats,
         splitAtGaps: splitAtGaps,
+        findOutages: findOutages,
+        formatOutage: formatOutage,
         recentFocusRange: recentFocusRange,
         buildPredictionLog: buildPredictionLog,
         regressionMetrics: regressionMetrics,

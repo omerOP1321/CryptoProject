@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const ChartUtils = require('../chart-utils.js');
 
 const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors, computeModelStats, splitAtGaps, recentFocusRange } = ChartUtils;
+const { findOutages, formatOutage } = ChartUtils;
 const { buildPredictionLog, regressionMetrics, classificationMetrics, pesaranTimmermann, rollingMetrics, regimeBreakdown, tradingSim } = ChartUtils;
 
 // ----------------------------------------------------- recentFocusRange
@@ -32,6 +33,49 @@ test('recentFocusRange applies defaults for focusBars and rightOffset', () => {
 });
 
 // -------------------------------------------------------- splitAtGaps
+
+// ----------------------------------------------------- findOutages
+
+test('findOutages returns nothing for an unbroken 5-min series', () => {
+    const h = [];
+    for (let i = 0; i < 50; i++) h.push({ time: 1784000000 + i * 300 });
+    assert.deepStrictEqual(findOutages(h, 3600), []);
+});
+
+test('findOutages ignores a hiccup shorter than the threshold', () => {
+    // 15-minute break: real, but not worth labelling as an outage.
+    const h = [{ time: 1784000000 }, { time: 1784000300 }, { time: 1784001200 }];
+    assert.deepStrictEqual(findOutages(h, 3600), []);
+});
+
+test('findOutages reports the real 2026-07-12..15 egress outage', () => {
+    // Last point before the restriction and first one after it.
+    const h = [{ time: 1784162400 }, { time: 1784451300 }];
+    assert.deepStrictEqual(findOutages(h, 3600), [
+        { fromSec: 1784162400, toSec: 1784451300, durationSec: 288900 }
+    ]);
+});
+
+test('findOutages finds every gap and tolerates unsorted input', () => {
+    const h = [{ time: 1784010000 }, { time: 1784000000 }, { time: 1784003600 }];
+    const out = findOutages(h, 3600);
+    assert.strictEqual(out.length, 2);
+    assert.deepStrictEqual(out.map(o => o.fromSec), [1784000000, 1784003600]);
+});
+
+test('findOutages survives junk input', () => {
+    assert.deepStrictEqual(findOutages(null, 3600), []);
+    assert.deepStrictEqual(findOutages([], 3600), []);
+    assert.deepStrictEqual(findOutages([{ time: 'x' }, { time: 1784000000 }], 3600), []);
+});
+
+test('formatOutage renders the units a reader expects', () => {
+    assert.strictEqual(formatOutage(288900), '3.3 days');   // the real outage
+    assert.strictEqual(formatOutage(7200), '2h');
+    assert.strictEqual(formatOutage(900), '15min');
+});
+
+// ----------------------------------------------------- splitAtGaps
 
 test('splitAtGaps keeps contiguous data as one segment', () => {
     const pts = [{ time: 0, value: 1 }, { time: 300, value: 2 }, { time: 600, value: 3 }];

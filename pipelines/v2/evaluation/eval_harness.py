@@ -124,21 +124,49 @@ def matured_records(payload, model, last_n=None, from_sec=-math.inf, to_sec=math
 # ----------------------------------------------------------------------
 # Scoring
 # ----------------------------------------------------------------------
-def block_bootstrap_dir_ci(hits, block=10, n_boot=2000, seed=0):
+def block_bootstrap_dir_ci(hits, times=None, block=10, n_boot=2000, seed=0,
+                           step=HORIZON_SEC):
     """95% CI for directional accuracy using a moving-block bootstrap, which
-    respects serial correlation (consecutive 5-min predictions are not iid)."""
+    respects serial correlation (consecutive 5-min predictions are not iid).
+
+    A block only models serial correlation if its members really are consecutive
+    in TIME. The series is not contiguous - the 2026-07-12..15 Supabase egress
+    restriction removed 986 cycles outright, and individual predictions drop out
+    whenever a move is exactly flat - so blocks picked by array index alone can
+    splice across a discontinuity and treat points days apart as 5 minutes apart.
+
+    Pass `times` (unix sec, same order as `hits`) to restrict block starts to
+    blocks that are genuinely contiguous. Measured impact on this dataset is
+    under 0.16pp on either CI bound, so this changes no conclusion - it just makes
+    the method match what the docstring claims. Falls back to the index-based
+    behaviour when `times` is absent.
+    """
     hits = np.asarray(hits, dtype=float)
     n = len(hits)
     if n == 0:
         return (float("nan"), float("nan"))
     rng = np.random.default_rng(seed)
     nblocks = int(np.ceil(n / block))
+
+    starts_pool = None
+    if times is not None and len(times) == n and n >= block:
+        t = np.asarray(times, dtype=float)
+        # A block starting at i is contiguous iff it spans exactly (block-1) steps.
+        span = t[block - 1:] - t[:n - block + 1]
+        starts_pool = np.flatnonzero(span == step * (block - 1))
+        if starts_pool.size == 0:
+            starts_pool = None      # nothing contiguous; keep the old behaviour
+
     means = []
     for _ in range(n_boot):
-        starts = rng.integers(0, n, size=nblocks)
-        sample = np.concatenate([
-            np.take(hits, range(s, s + block), mode="wrap") for s in starts
-        ])[:n]
+        if starts_pool is not None:
+            s = rng.choice(starts_pool, size=nblocks)
+            sample = np.concatenate([hits[x:x + block] for x in s])[:n]
+        else:
+            s = rng.integers(0, n, size=nblocks)
+            sample = np.concatenate([
+                np.take(hits, range(x, x + block), mode="wrap") for x in s
+            ])[:n]
         means.append(sample.mean())
     lo, hi = np.percentile(means, [2.5, 97.5])
     return (lo * 100, hi * 100)
@@ -148,7 +176,7 @@ def score_model(records):
     """ERR, DIR, significance, and cost-aware edge for one model's matured set."""
     if not records:
         return None
-    errs, signed_ret, dir_hits = [], [], []
+    errs, signed_ret, dir_hits, dir_times = [], [], [], []
     for r in records:
         errs.append(abs(r["pred"] - r["actual"]) / r["actual"] * 100)
         base = r["base"]
@@ -159,12 +187,16 @@ def score_model(records):
         if pm == 0 or am == 0:
             continue
         dir_hits.append(1 if (pm > 0) == (am > 0) else 0)
+        # Track each hit's timestamp so the bootstrap can tell real 5-min
+        # adjacency from points either side of an outage or a skipped flat move.
+        dir_times.append(r["t"])
         # long if pred up, short if pred down; realized signed return (fraction)
         signed_ret.append(np.sign(pm) * (am / base))
     n_dir = len(dir_hits)
     hits = int(np.sum(dir_hits))
     dir_acc = hits / n_dir * 100 if n_dir else float("nan")
-    lo, hi = block_bootstrap_dir_ci(dir_hits) if n_dir else (float("nan"),) * 2
+    lo, hi = (block_bootstrap_dir_ci(dir_hits, times=dir_times)
+              if n_dir else (float("nan"),) * 2)
     gross = float(np.mean(signed_ret)) if signed_ret else float("nan")  # per-trade return
     return {
         "n": len(records),
