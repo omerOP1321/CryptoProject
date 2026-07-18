@@ -35,7 +35,7 @@ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 // Model -> which prediction-history array it lives in. v2 challengers target a
 // 1h horizon and are stored separately; mirrors the dashboard's MODELS config.
-const MODELS = ["LSTM", "Transformer", "ARIMA", "LSTM_v2", "Transformer_v2"];
+const MODELS = ["LSTM", "Transformer", "ARIMA", "LSTM_v2", "Transformer_v2", "ARIMA_v2"];
 const isV2 = (m: string) => m.endsWith("_v2");
 const COINS: Record<string, number> = { BTCUSDT: 1, ETHUSDT: 2, XRPUSDT: 3 };
 

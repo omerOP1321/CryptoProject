@@ -25,7 +25,7 @@ import torch
 import torch.nn as nn
 import ta
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.arima.model import ARIMA
 import joblib
@@ -462,6 +462,15 @@ models_tft = {}
 # Challenger (v2) models loaded from models_v2/ (inlined defs above; no pipeline
 # package needed). Stays empty unless artifacts exist.
 models_v2_dict = {}
+
+# Prediction history per coin, seeded from Supabase once and maintained here.
+# Re-reading the full payload every cycle (~458KB gzipped x 3 coins x 288 cycles
+# = ~400MB/day) was the other half of the egress that got the project restricted.
+# Holding it in memory also means a Supabase outage no longer punches a permanent
+# hole in the series: predictions made while the DB is unreachable accumulate here
+# and go up whole once service returns.
+#   db_id -> {"legacy": [...], "v2": [...]}
+history_cache = {}
 # v2 60-min forecasts run ONCE per clock hour and are cached here; the rest of the
 # hour's 5-min cycles reuse the cached result. Key: (symbol, model_name, hour_ts).
 v2_pred_cache = {}
@@ -730,6 +739,33 @@ def infer_arima(close_series):
             print(f"   -> ARIMA fitting failed: {e}")
             return None
 
+
+def infer_arima_hourly(df_upto_hour):
+    """1-hour ARIMA baseline. Resample the 5-min history up to the current clock
+    hour into 1h candles and forecast the NEXT hourly close (one step = 60 min).
+
+    Mirrors infer_arima exactly (same ARIMA(2,1,0) order, fit online each cycle,
+    no saved artifact) but on the hourly grid, so its horizon matches the v2
+    challengers' 60-min series. Fitting on the 1h close series - rather than
+    forecasting 12 steps on the 5-min series - keeps the model's noise/signal at
+    the horizon it is scored against, the same reasoning behind the 5-min
+    infer_arima using steps=1.
+
+    df_upto_hour: history filtered to open_time <= the hour anchor (see
+    run_inference), so the forecast is reproducible for every 5-min cycle within
+    the hour. Returns the forecast price, or None if ARIMA can't fit / too little
+    data.
+    """
+    try:
+        s = (df_upto_hour.set_index('open_time')['close']
+             .resample('1h').last().dropna())
+    except Exception as e:
+        print(f"   -> Hourly ARIMA resample failed: {e}")
+        return None
+    if len(s) < 30:
+        return None
+    return infer_arima(s.tail(SEQ_LENGTH).reset_index(drop=True))
+
 def load_training_artifacts(symbol, tag):
     """Load the StandardScaler + feature list saved by preprocessing for
     (symbol, tag) where tag is 'lstm' or 'tft'. Using the exact training scaler
@@ -977,13 +1013,49 @@ def save_data_to_drive():
             atomic_to_csv(df_hist, csv_path)
             print(f"✅ Save complete! {len(df_hist)} rows written to {csv_path}.")
 
+def journal_prediction(db_id, symbol, entry, series):
+    """Append one prediction to a local append-only journal, before and regardless of
+    the Supabase push.
+
+    This is the durable record. history_cache survives a DB outage but not a restart,
+    and the engine log only dumps a payload on a SUCCESSFUL push - which is exactly why
+    the 986 cycles lost to the 12-15 Jul 2026 egress restriction were unrecoverable
+    (all that survived was a rounded Ensemble price per cycle). Journalling every
+    prediction unconditionally means any future outage is repaired by replaying this
+    file into the payload, with no reconstruction and no guessing.
+
+    Deliberately dependency-free and best-effort: a journal error must never cost us
+    the prediction itself.
+    """
+    try:
+        path = os.path.join(DATA_DIR, f'predictions_{symbol}.jsonl')
+        rec = dict(entry)
+        rec["series"] = series          # 'legacy' (5m) or 'v2' (longer horizon)
+        rec["db_id"] = db_id
+        rec["written_at"] = datetime.now(timezone.utc).isoformat()
+        with open(path, 'a') as f:
+            f.write(json.dumps(rec) + '\n')
+            f.flush()
+            os.fsync(f.fileno())        # survive a hard kill, not just a clean exit
+    except Exception as e:
+        print(f"   -> ⚠️ Could not journal prediction ({series}): {e}")
+
+
 def push_to_supabase(results, db_id):
     if not supabase:
         return
     print(f"   -> 🌐 Pushing updates to Supabase (id: {db_id})...")
     try:
-        response = supabase.table('predictions').upsert({"id": db_id, "payload": results}).execute()
-        print(f"   -> ✅ Successfully pushed to Supabase! Response data: {response.data}")
+        # returning='minimal' is load-bearing: the default ('representation')
+        # sends the whole payload straight back on every push (~458KB gzipped).
+        # Three coins every 5 minutes made that ~400MB/day of egress on its own,
+        # which is half of what tripped Supabase's exceed_egress_quota
+        # restriction (402) and froze the dashboard 12-15 Jul 2026. The response
+        # is never read.
+        supabase.table('predictions').upsert(
+            {"id": db_id, "payload": results}, returning="minimal"
+        ).execute()
+        print(f"   -> ✅ Successfully pushed to Supabase (id: {db_id}).")
     except Exception as e:
         print(f"   -> ❌ Supabase push failed: {e}")
 
@@ -1038,17 +1110,33 @@ def run_inference(symbol, db_id):
     global df_hist_dict
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching latest data for {symbol}...")
 
-    # Fetch existing prediction history from Supabase to append to it
-    existing_history = []
-    existing_history_v2 = []
-    if supabase:
-        try:
-            res = supabase.table('predictions').select('payload').eq('id', db_id).execute()
-            if res.data and res.data[0].get('payload'):
-                existing_history = res.data[0]['payload'].get('prediction_history', [])
-                existing_history_v2 = res.data[0]['payload'].get('prediction_history_v2', [])
-        except Exception as e:
-            print(f"   -> Failed to fetch existing prediction history: {e}")
+    # Prediction history comes from the in-memory cache, seeded from Supabase on
+    # the first cycle for this coin only (see history_cache).
+    cached = history_cache.get(db_id)
+    if cached is None:
+        if not supabase:
+            cached = {"legacy": [], "v2": []}
+            history_cache[db_id] = cached
+        else:
+            try:
+                res = supabase.table('predictions').select('payload').eq('id', db_id).execute()
+                payload = res.data[0].get('payload') if res.data else None
+                cached = {
+                    "legacy": (payload or {}).get('prediction_history', []),
+                    "v2": (payload or {}).get('prediction_history_v2', []),
+                }
+                history_cache[db_id] = cached
+                print(f"   -> Seeded prediction history from Supabase: "
+                      f"{len(cached['legacy'])} legacy / {len(cached['v2'])} v2 entries.")
+            except Exception as e:
+                # Skip the cycle rather than fall back to an empty history: a
+                # failed read followed by a successful push would overwrite the
+                # whole stored series with this single entry.
+                print(f"   -> Failed to seed prediction history, skipping cycle: {e}")
+                return
+
+    existing_history = cached["legacy"]
+    existing_history_v2 = cached["v2"]
 
     df_hist = df_hist_dict[symbol]
     # 1. Fetch & Append Data
@@ -1172,21 +1260,55 @@ def run_inference(symbol, db_id):
     else:
         results["chosen_model"] = "None"
 
-    # 7b. Challenger v2 predictions (return-based price + direction head). Additive
-    # and fully guarded so any v2 error never blocks the legacy push. Deliberately
-    # computed AFTER the Ensemble above so the champion ensemble is unchanged.
+    # 7b. Hourly-horizon (60-min) predictions -> the separate prediction_history_v2
+    # series. Two producers share the same clock-hour grid: the v2 neural
+    # challengers and the ARIMA_v2 statistical baseline. All additive and fully
+    # guarded so any error here never blocks the legacy push, and computed AFTER
+    # the Ensemble above so the champion ensemble is unchanged.
+    #
+    # Anchor every 60-min forecast to the CLOCK-HOUR grid: base the prediction on the
+    # candle at the most recent hour boundary and forecast the NEXT hour boundary. So a
+    # run started at 06:23 still forecasts 06:00 -> 07:00, and every 5-min cycle within
+    # that hour reproduces the same point (deduped by target time).
     v2_hist_entries = {}      # 5-min-horizon v2 -> shares the legacy history
-    v2_60m_entries = {}       # longer-horizon v2 -> its own history series
+    v2_60m_entries = {}       # 60-min-horizon models -> the v2 history series
     v2_target_time = None     # hour-aligned target timestamp for the v2 series
+    last_time_dt = pd.Timestamp(df_hist['open_time'].iloc[-1])
+    hour_anchor = last_time_dt.floor('h')
+    hour_key = int(hour_anchor.timestamp())
+    df_anchor = df_hist[df_hist['open_time'] <= hour_anchor]
+
+    # 7b-i. ARIMA_v2 (1-hour statistical baseline). Fit once per clock hour from the
+    # hour anchor and reuse the cached result for the rest of the hour's cycles.
+    # Runs independently of the v2 neural models so it works even with no v2 artifacts.
+    try:
+        ck_arima = (symbol, 'ARIMA_v2', hour_key)
+        arima_h = v2_pred_cache.get(ck_arima)
+        if arima_h is None and len(df_anchor) >= 50:
+            price_h = infer_arima_hourly(df_anchor)
+            if price_h is not None:
+                arima_h = {"price": float(price_h), "base": float(df_anchor['close'].iloc[-1])}
+                for k in list(v2_pred_cache):        # drop stale-hour entries
+                    if k[2] != hour_key:
+                        del v2_pred_cache[k]
+                v2_pred_cache[ck_arima] = arima_h
+                print(f"   -> ARIMA_v2 forecast computed for "
+                      f"{hour_anchor.strftime('%H:%M')} -> "
+                      f"{(hour_anchor + pd.Timedelta(minutes=60)).strftime('%H:%M')}")
+        if arima_h is not None:
+            base_h, price_h = arima_h["base"], arima_h["price"]
+            results["predictions"]["ARIMA_v2"] = {
+                "val": price_h, "price": price_h,
+                "change_pct": (price_h - base_h) / base_h * 100,
+                "horizon_min": 60,
+            }
+            v2_60m_entries["ARIMA_v2"] = price_h
+            v2_target_time = hour_key + 60 * 60
+    except Exception as e:
+        print(f"   -> ARIMA_v2 inference failed: {e}")
+
+    # 7b-ii. v2 neural challengers (return-based price + direction head).
     if symbol in models_v2_dict:
-        # Anchor longer-horizon (e.g. 60-min) forecasts to the CLOCK-HOUR grid: base the
-        # prediction on the candle at the most recent hour boundary and forecast the NEXT
-        # hour boundary. So a run started at 06:23 still forecasts 06:00 -> 07:00, and every
-        # 5-min cycle within that hour reproduces the same point (deduped by target time).
-        last_time_dt = pd.Timestamp(df_hist['open_time'].iloc[-1])
-        hour_anchor = last_time_dt.floor('h')
-        hour_key = int(hour_anchor.timestamp())
-        df_anchor = df_hist[df_hist['open_time'] <= hour_anchor]
         for mt, name in (('lstm', 'LSTM_v2'), ('tft', 'Transformer_v2')):
             entry = models_v2_dict[symbol].get(mt)
             if not entry:
@@ -1246,6 +1368,8 @@ def run_inference(symbol, db_id):
             "Ensemble": results["predictions"]["Ensemble"]["price"] if "Ensemble" in results["predictions"] else None
         }
         new_entry.update(v2_hist_entries)
+        # Journal first: this must not depend on the push below succeeding.
+        journal_prediction(db_id, symbol, new_entry, 'legacy')
 
         history_list = results.get("prediction_history", [])
         history_df = pd.DataFrame(history_list)
@@ -1273,6 +1397,9 @@ def run_inference(symbol, db_id):
                     cleaned_entry[k] = v
             cleaned_history.append(cleaned_entry)
         results["prediction_history"] = cleaned_history
+        # Keep the cache current even if the push below fails, so the next
+        # successful push carries everything made in between.
+        history_cache[db_id]["legacy"] = cleaned_history
     except Exception as e:
         print(f"   -> Failed to update prediction history: {e}")
 
@@ -1284,6 +1411,7 @@ def run_inference(symbol, db_id):
         if v2_60m_entries and v2_target_time:
             new_v2 = {"time": v2_target_time}
             new_v2.update(v2_60m_entries)
+            journal_prediction(db_id, symbol, new_v2, 'v2')
 
             hist_v2 = results.get("prediction_history_v2", [])
             df_v2 = pd.DataFrame(hist_v2)
@@ -1301,6 +1429,7 @@ def run_inference(symbol, db_id):
                 cleaned_v2.append({k: (None if isinstance(v, float) and math.isnan(v) else v)
                                    for k, v in entry.items()})
             results["prediction_history_v2"] = cleaned_v2
+            history_cache[db_id]["v2"] = cleaned_v2
     except Exception as e:
         print(f"   -> Failed to update v2 prediction history: {e}")
 
@@ -1360,7 +1489,41 @@ def seconds_to_next_boundary(interval_sec=300, offset_sec=10):
     :00/:05/:10 ...) plus a small offset so the freshly-opened candle is
     available from Binance. Anchoring to the real clock - instead of sleeping a
     fixed 300s after each cycle - prevents cumulative drift, since cycle
-    processing time no longer pushes each run later and later."""
+    processing time no longer pushes each run later and later.
+
+    offset_sec has a consequence that is NOT obvious and was measured on
+    2026-07-17 before anyone "fixes" it:
+
+    Running 10s past the boundary means fetch_latest_data() returns the new
+    candle already OPEN, so the last row df_hist/calculate_features sees is a
+    candle holding ~10-20s of trades. Its close is the price at ~T+15s, not the
+    candle's real close at T+300, and its volume is a fraction of a full bar
+    while calculate_features() z-scores volume. The models trained on complete
+    candles, so this is a genuine train/serve mismatch - and the eval scores each
+    prediction from a baseline (the price at target_time - 300) the model never
+    actually saw.
+
+    It looks like a bug. Feeding the models the COMPLETE previous candle instead
+    was A/B tested against 900 real matured predictions, scored exactly as the
+    dashboard scores them:
+
+        mean DIR   partial (shipping): 54.26%   complete: 52.52%   (-1.74pp)
+        mean |err| partial (shipping): 0.1067%  complete: 0.0848%
+        complete better in only 3/12 model-coin combos
+
+    So "fixing" it trades directional accuracy for price accuracy. A plausible
+    reading is that the staleness is doing the work: pred - baseline then carries
+    -(last ~290s of movement), an accidental mean-reversion signal, whereas a
+    complete-candle prediction lands nearly on the baseline and its direction is
+    close to noise. That would make the ~54% an artifact rather than skill, which
+    fits the known %B-autocorrelation finding.
+
+    Underpowered (n~300/coin, CIs about +/-5.6pp) - it rules out the large
+    degradation, not a small one. Do not change offset_sec, drop the forming
+    candle, or re-align target_time without re-running that comparison: the whole
+    stored history was produced under these semantics, so a change also makes new
+    points non-comparable with old ones.
+    """
     now = time.time()
     next_boundary = (now // interval_sec + 1) * interval_sec + offset_sec
     return max(1.0, next_boundary - now)

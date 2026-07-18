@@ -1,5 +1,9 @@
-# Ignore data files
-data/
+# Ignore data files — but DO track the prediction journals, so the durable
+# per-cycle record (data/predictions_*.jsonl) is backed up off-machine in git,
+# not just on this laptop. Must be data/* (not data/) or the negation below
+# can't re-include a file whose parent dir is excluded.
+data/*
+!data/predictions_*.jsonl
 processed_data/
 models/
 models_v2/
@@ -38,6 +42,10 @@ token.json
 #Ignor plans and reports
 audit_report.md
 model_audit.md
+
+# University submission deliverables — generated bundle + its zip, kept out of git
+docs/submission/
+docs/submission.zip
 .DS_Store
 **/.DS_Store
 

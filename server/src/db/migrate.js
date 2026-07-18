@@ -27,9 +27,10 @@ you can compare how they perform against one another.
 
 ## The models
 
-- **ARIMA** — the statistical baseline.
+- **ARIMA** — the statistical baseline targeting the next 5 minutes.
 - **LSTM (5M) & TFT (5M)** — legacy deep-learning models targeting the next 5 minutes.
 - **LSTM (1H) & TFT (1H)** — v2 challenger models targeting +60 minutes, anchored to the clock hour.
+- **ARIMA (1H)** — the statistical baseline at the 1-hour horizon, also anchored to the clock hour.
 
 ## How it works
 

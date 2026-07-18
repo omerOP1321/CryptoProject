@@ -268,10 +268,11 @@ More expressive architecture
 Slightly more stable validation behavior
 Still limited by noisy financial targets
 🚀 Future Improvements
-Predict log-returns instead of %B
-Use trading-based loss (PnL optimization)
-Add attention visualization for TFT
-Convert pipeline into full backtesting engine
+Longer prediction horizons (15–60 min): reduce microstructure noise where short-horizon targets are near-random, improving signal-to-noise and directional accuracy
+Richer feature set: order-flow imbalance, market-microstructure features, and on-chain metrics (exchange flows, active addresses) beyond OHLCV
+Walk-forward retraining with PnL-aware loss: rolling-window retraining to measure and adapt to concept drift; optimize a trading objective instead of pure MSE
+Risk-aware inference: cost-aware position sizing (fees/slippage), abstain-when-uncertain logic, and conformal prediction intervals for calibrated confidence
+Full backtesting engine: event-driven backtester to validate strategies under realistic execution assumptions
 
 ---
 ## 🔍 Inference / Prediction
@@ -362,6 +363,36 @@ Training metadata (symbol, timeframe)
 This project includes a real-time forecasting dashboard that visualizes AI predictions and market data using a web-based interface connected to a backend prediction engine via Supabase.
 
 The forecasting system bridges the trained models (LSTM + Transformer) with a live UI for monitoring predictions in real time.
+
+### 🕐 ARIMA (1H) — 1-Hour Statistical Baseline
+
+Alongside the 5-minute models, the live engine runs a second ARIMA forecaster at
+the **1-hour horizon** (internal key `ARIMA_v2`, shown as **ARIMA (1H)**). It is a
+statistical baseline for the same clock-hour series as the v2 LSTM/TFT challengers,
+so the dashboard now has a non-ML reference at *both* horizons (5M and 1H).
+
+- **Overview** — for each cycle it resamples the coin's 5-minute history into 1-hour
+  candles and fits an `ARIMA(2,1,0)` on the hourly close series, forecasting the next
+  hourly close (one step = 60 minutes). The existing 5-minute ARIMA is unchanged.
+- **Supported cryptocurrencies** — BTC, ETH and XRP (every coin the project supports);
+  it is produced per-coin exactly like the other models.
+- **Training** — ARIMA keeps **no saved artifact**. Like the 5-minute baseline it is
+  *fit online* each run (`infer_arima_hourly` in `serving/inference_orchestrator.py`),
+  so there is no `.pth`/scaler to train, download from Drive, or version.
+- **Inference & scheduling** — anchored to the **clock-hour grid**: the forecast is
+  based on the candle at the most recent hour boundary and targets the next boundary
+  (e.g. 06:00 → 07:00). It is computed **once per clock hour** and cached, so every
+  5-minute cycle within the hour reproduces the same point (deduped by target time),
+  matching how the v2 hourly models already behave.
+- **Storage** — stored in the separate `prediction_history_v2` payload series with
+  `target_time = hour + 3600` and `horizon_min: 60`, so it is scored against the actual
+  price 60 minutes later and never mixes with the 5-minute track.
+- **Frontend / stats** — appears natively everywhere models do (dashboard cards, legend,
+  charts, analytics, rankings, investment simulator). Because the frontend routes any
+  model whose key ends in `_v2` to the hourly series, all statistics (Direction Accuracy,
+  MAE, RMSE, Error %, win rate, rankings, etc.) include it automatically.
+- **Configuration / new commands** — none. It runs inside the existing engine loop
+  (`python serving/inference_orchestrator.py`); no extra flags, models, or deploy steps.
 
 🔹 System Overview
 

@@ -10,18 +10,18 @@
 
     // ----- Single source of truth for model identity (colors/labels/tags) -----
     var MODELS = {
-        order: ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2'],
+        order: ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'],
         colors: {
             'LSTM': '#3b9eff', 'Transformer': '#e25bd0', 'ARIMA': '#22d3ee',
-            'LSTM_v2': '#f5a524', 'Transformer_v2': '#818cf8'
+            'LSTM_v2': '#f5a524', 'Transformer_v2': '#818cf8', 'ARIMA_v2': '#34d399'
         },
         labels: {
             'LSTM': 'LSTM (5M)', 'Transformer': 'TFT (5M)', 'ARIMA': 'ARIMA',
-            'LSTM_v2': 'LSTM (1H)', 'Transformer_v2': 'TFT (1H)'
+            'LSTM_v2': 'LSTM (1H)', 'Transformer_v2': 'TFT (1H)', 'ARIMA_v2': 'ARIMA (1H)'
         },
         tags: {
             'LSTM': 'Legacy', 'Transformer': 'Legacy', 'ARIMA': 'Base',
-            'LSTM_v2': 'V2', 'Transformer_v2': 'V2'
+            'LSTM_v2': 'V2', 'Transformer_v2': 'V2', 'ARIMA_v2': 'Base'
         },
         isV2: function (m) { return m.endsWith('_v2'); },
         labelOf: function (m) { return MODELS.labels[m] || m; }
