@@ -166,17 +166,27 @@ know the order to reason about results:
    split, the test window slides backwards from the end of the series
    (`wf_folds` folds, each `wf_test_frac`=10% of the data, with a 10%
    validation block before it). The feature scaler (StandardScaler) is fit on
-   each fold's TRAIN slice only — no leakage.
+   each fold's TRAIN slice only — no leakage. The last `horizon` rows of the
+   train and validation blocks are **purged** (dropped), because a window
+   ending there carries a label from inside the next block (López de Prado
+   2018, ch. 7). Disable with `PURGE = False`.
 7. **Sequencing:** rows are windowed into sequences of `seq_length`=60 candles;
    the target belongs to the last candle of each window.
 8. **Training:** joint loss = Huber(predicted return) + `cls_loss_weight` ×
-   CrossEntropy(direction class), AdamW, ReduceLROnPlateau, early stopping on
-   validation loss (`patience`=6 by default).
+   CrossEntropy(direction class, with inverse-frequency class weights and
+   label smoothing 0.05), AdamW with linear warmup → cosine LR decay,
+   global-norm gradient clipping (1.0), mixed precision on CUDA, early
+   stopping on validation loss (`patience`=6). Runs are seeded (`SEED`) for
+   reproducibility. The research basis for each technique is tabulated in the
+   notebook's legend cell.
 9. **Evaluation:** out-of-sample test predictions from all folds are pooled and
    scored (see §7).
-10. **Saving + logging:** the model weights, its scaler, and a metadata JSON go
-    to `models_v2/{horizon×5}min/`; one row is appended to
+10. **Saving + logging:** the **fold-0 model** (the one trained on the largest,
+    most-recent window), its scaler, and a metadata JSON go to
+    `models_v2/{horizon×5}min/`; one row is appended to
     `models_v2/experiments_log.csv` and the markdown leaderboard is rebuilt.
+    With `PLOTS = True`, each run also renders loss curves, the pooled
+    out-of-sample equity curve (cumulative net bps), and a confusion matrix.
 
 ---
 
@@ -245,17 +255,20 @@ the inference code.
 
 ### Quick experiments (Cells 3 + 4)
 
-Edit Cell 3, re-run Cell 3 then Cell 4. The knobs:
+Cell 3 is an **interactive Colab form** — dropdowns, sliders, and checkboxes
+appear next to the code (outside Colab it behaves as plain Python). Change a
+value, re-run Cell 3, then Cell 4. The knobs:
 
 | Knob | Values | Meaning |
 |---|---|---|
 | `MODEL` | `'lstm'` / `'tft'` | which architecture |
 | `SYMBOL` | `'BTCUSDT'` / `'ETHUSDT'` / `'XRPUSDT'` | which coin |
 | `HORIZON` | 1 / 3 / 6 / 12 | candles ahead = 5 / 15 / 30 / 60 minutes |
-| `MAX_ROWS` | e.g. `150_000`, or `None` | cap to most recent N candles. `None` = full history. **Only full-history runs are decisive** |
+| `FULL_HISTORY` / `MAX_ROWS` | checkbox / integer | `FULL_HISTORY` unchecked = cap to the most recent `MAX_ROWS` candles; checked = full history. **Only full-history runs are decisive** |
 | `WF_FOLDS` | 1–5 | walk-forward folds; 1 = fastest, 3–5 = robust |
 | `EPOCHS` / `TRAIN_STEP` | — | fewer epochs / larger stride = faster, noisier |
 | `USE_EXTRA_FEATURES`, `USE_ONCHAIN`, `AUTO_SELECT` | bool | feature levers (§5) |
+| `SEED`, `PURGE`, `CLASS_WEIGHTS`, `LABEL_SMOOTHING`, `GRAD_CLIP`, `AMP`, `PLOTS` | — | training-engine levers; the defaults are the research-backed settings — leave them unless you're ablating |
 
 Rough timings on a Colab T4 (derived from the notebook's own comments and ETA
 math; scale with data size, folds, and epochs):
@@ -304,6 +317,9 @@ features ON, on-chain OFF, per-coin Boruta auto-selection ON.
 | `trades` | Number of traded bars pooled across folds | more = more reliable p |
 | `ERR` vs `persist_ERR` | Mean absolute % error of the reconstructed price vs. the "price doesn't move" baseline | `ERR < persist_ERR` |
 | `net_bps` | Mean signed return per trade in basis points, **minus 2 bps round-trip cost** | > 0 (tradeable after costs) |
+| `mcc` | Matthews correlation over all 3 classes (UP/FLAT/DOWN) — robust to class imbalance, unlike accuracy | > 0 (0 = no skill) |
+| `sharpe` | Per-trade Sharpe ratio (mean/std of signed returns on traded bars; not annualized) | > 0, higher = steadier edge |
+| `seed` | The run's random seed — same config + same seed reproduces the run | — |
 | `REAL EDGE` | `YES` only if all three hold: p < 0.05 AND DIR > 50% AND ERR < persist_ERR | YES |
 
 ### How to compare runs
@@ -391,19 +407,14 @@ Drive before re-running Cell 7.
 
 ## 9. Known issues, stale cells, and recommended cleanup (all verified)
 
-1. **⚠️ Bug — the saved model is trained on the *oldest* data, not the newest.**
-   `walk_forward_folds` yields fold 0 (test window at the very end of history,
-   largest training set) first, then slides *backwards*. `run()` keeps
-   `last_fold` = the final iteration = the fold with the **smallest, oldest**
-   training set, and saves that model — while the comment claims it saves the
-   "most-recent fold". With Cell 7's 3 folds, the deployed weights are trained
-   on roughly the first 60% of history and never see the most recent ~2 years.
-   The pooled evaluation metrics are unaffected (they pool all folds), but the
-   shipped weights are stale. **Fix:** in `run()`, capture the fold-0 model
-   (e.g. `if fold["fold"] == 0: last_fold = (model, fold)`) instead of
-   overwriting `last_fold` every iteration — or better, retrain once on all
-   data up to the present after evaluation. Apply the same fix to
-   `pipelines/v2/pipeline/train.py`, which the notebook mirrors.
+1. **The `pipeline/*.py` modules lag the notebook.** The notebook's training
+   engine was upgraded on 2026-07-18 (fold-0 deploy fix, purged walk-forward,
+   AdamW+cosine, AMP, class weights, label smoothing, MCC/Sharpe logging), but
+   `train.py` / `dataset.py` in `pipelines/v2/pipeline/` still have the old
+   code — including the old bug where the *oldest* fold's model was saved.
+   Deployment is unaffected (the orchestrator inlines only `features.py` /
+   `models.py` / `infer.py`, which did not change), but don't train via
+   `python -m pipeline.train` until the modules are re-synced.
 2. **Cells 4.5/4.6 are redundant for normal use:** with `AUTO_SELECT = True`
    (the Cell 3 default), Boruta already runs inside every `run()`. Note that
    Cell 7 **never** reads the `SELECTED` dict or the saved JSON — it always
@@ -418,6 +429,16 @@ and the one-off "Cell 6.8" XRP check; cleared the stale `SKIP` set in Cell 7;
 corrected the wrong "Cell 7 auto-uses SELECTED" comment in Cell 4.5; fixed the
 stale horizon comment in Cell 6.5 and the feature-count print in Cell 3; the
 notebook's top markdown cell now carries the full cell-map legend.)*
+
+*(Engine upgrade applied 2026-07-18: fold-0 deploy save — fixes the
+oldest-fold bug; purged walk-forward joins; AdamW + warmup→cosine LR;
+mixed precision; gradient clipping; class-weighted + label-smoothed CE;
+seeded runs; MCC + per-trade Sharpe added to the log, leaderboard, and
+`meta_*.json`; the old `experiments_log.csv` is migrated in place to the new
+columns automatically on the first logged run; Cell 3 is now an interactive
+Colab form; diagnostic plots after every run. Model architectures, features,
+and artifact formats are unchanged — existing deployed models and the
+orchestrator's inlined inference code remain fully compatible.)*
 
 ---
 
