@@ -380,10 +380,18 @@ Cell 7. (Cell 8 is hard-coded to `horizon_min=60`; if you ever change
 
 - The orchestrator has the v2 model/feature/inference code **inlined** — it
   needs only the artifacts, not this notebook or the `pipeline/` folder.
-- On startup it downloads **the entire `models_v2/60min/` Drive folder**
-  (`V2_HORIZON_MIN = 60` in the orchestrator; must match your
-  `PRODUCT_HORIZON × 5`), loads all six models, and pushes their predictions
-  to Supabase as `LSTM_v2` / `Transformer_v2` alongside the legacy models.
+- On startup it downloads **the entire `models_v2/{N}min/` Drive folder for every
+  horizon listed in `V2_HORIZONS`** (currently `[60, 5]` in the orchestrator —
+  each entry must match a `PRODUCT_HORIZON × 5` you actually trained), loads all
+  six models per horizon, and pushes their predictions to Supabase alongside the
+  legacy models. Naming: the **first** horizon in the list is the primary one and
+  keeps the unsuffixed `LSTM_v2` / `Transformer_v2`; every other horizon is
+  suffixed, e.g. `LSTM_v2_5m` / `Transformer_v2_5m`.
+- Which history series a horizon lands in is decided by its `meta['horizon']`:
+  `horizon == 1` (5 min) joins the **legacy** `prediction_history` (target = +5 min);
+  anything longer goes to `prediction_history_v2` on the clock-hour grid.
+- To put a new horizon live: train it, confirm the 18 files are in
+  `MyDrive/CryptoProject/models_v2/{N}min/`, add `N` to `V2_HORIZONS`, restart.
 - The Vercel dashboard reads Supabase — no website-side change is needed.
 
 So the deploy procedure is:

@@ -250,10 +250,19 @@ class TFTModel(nn.Module):
 # ONLY the trained artifacts in models_v2/ on Drive — no pipeline/ code folder.
 # Keep these defs in sync with pipeline/{features,models,infer}.py.
 V2_DIR = os.path.join(DRIVE_BASE_DIR, 'models_v2')
-# v2 models are now organized per prediction-horizon (models_v2/{N}min/). Point the
-# live engine at the deployed horizon; bump this to switch which horizon goes live.
-V2_HORIZON_MIN = 60
+# v2 models are now organized per prediction-horizon (models_v2/{N}min/). The engine
+# serves EVERY horizon listed here side by side — add a trained horizon to the list to
+# put it live. The first entry is the "primary" one: its models keep the original
+# unsuffixed names (LSTM_v2 / Transformer_v2) so existing history and the dashboard
+# keep working; every other horizon gets a "_{N}m" suffix (e.g. LSTM_v2_5m).
+V2_HORIZONS = [60, 5]
+V2_HORIZON_MIN = V2_HORIZONS[0]          # primary horizon (back-compat naming/logs)
 V2_MODEL_DIR = os.path.join(V2_DIR, f'{V2_HORIZON_MIN}min')
+V2_MODEL_DIRS = {h: os.path.join(V2_DIR, f'{h}min') for h in V2_HORIZONS}
+
+def v2_model_name(base, horizon_min):
+    """'LSTM' + 60 -> 'LSTM_v2' (primary); 'LSTM' + 5 -> 'LSTM_v2_5m'."""
+    return f'{base}_v2' if horizon_min == V2_HORIZON_MIN else f'{base}_v2_{horizon_min}m'
 V2_VOL_WINDOW = 288
 V2_CLASS_NAMES = ["DOWN", "FLAT", "UP"]
 V2_FEATURES = [
@@ -420,12 +429,13 @@ class TFTDual(nn.Module):
         z = self.encoder(self.pos(self.vsn(x)))[:, -1, :]
         return self.reg_head(z).squeeze(-1), self.cls_head(z)
 
-def v2_load_model(model_type, symbol):
-    meta = json.load(open(os.path.join(V2_MODEL_DIR, f'meta_{model_type}_{symbol}.json')))
-    scaler = joblib.load(os.path.join(V2_MODEL_DIR, f'scaler_{model_type}_{symbol}.pkl'))
+def v2_load_model(model_type, symbol, model_dir=None):
+    model_dir = model_dir or V2_MODEL_DIR
+    meta = json.load(open(os.path.join(model_dir, f'meta_{model_type}_{symbol}.json')))
+    scaler = joblib.load(os.path.join(model_dir, f'scaler_{model_type}_{symbol}.pkl'))
     n_feat = len(meta['features'])
     model = LSTMDual(n_feat) if model_type == 'lstm' else TFTDual(n_feat)
-    model.load_state_dict(torch.load(os.path.join(V2_MODEL_DIR, f'v2_{model_type}_{symbol}.pth'),
+    model.load_state_dict(torch.load(os.path.join(model_dir, f'v2_{model_type}_{symbol}.pth'),
                                      map_location=DEVICE))
     model.to(DEVICE).eval()
     return model, scaler, meta
@@ -851,12 +861,15 @@ def initialize():
 
                 # 3. Download the v2 challenger models (whole models_v2/{N}min folder),
                 #    just like the legacy fetch above. Folder-scoped to dodge the
-                #    scaler_*.pkl filename clash. Skipped if all 6 are already local.
-                have_v2 = os.path.isdir(V2_MODEL_DIR) and all(
-                    os.path.exists(os.path.join(V2_MODEL_DIR, f'v2_{mt}_{sym}.pth'))
-                    for sym, _ in COINS for mt in ('lstm', 'tft'))
-                if not have_v2:
-                    download_drive_folder(service, ['models_v2', f'{V2_HORIZON_MIN}min'], V2_MODEL_DIR)
+                #    scaler_*.pkl filename clash. One fetch per deployed horizon;
+                #    a horizon whose 6 files are already local is skipped.
+                for h in V2_HORIZONS:
+                    hdir = V2_MODEL_DIRS[h]
+                    have_v2 = os.path.isdir(hdir) and all(
+                        os.path.exists(os.path.join(hdir, f'v2_{mt}_{sym}.pth'))
+                        for sym, _ in COINS for mt in ('lstm', 'tft'))
+                    if not have_v2:
+                        download_drive_folder(service, ['models_v2', f'{h}min'], hdir)
             else:
                 print("   -> ⚠️ Google Drive API service could not be initialized.")
         else:
@@ -1077,30 +1090,32 @@ def init_v2():
     global V2_MODEL_DIR
     def _has_pth(d):
         return os.path.isdir(d) and any(x.endswith('.pth') for x in os.listdir(d))
-    # Backward-compat: per-horizon dir empty but root has models (pre-reorg layout).
+    # Backward-compat: primary per-horizon dir empty but root has models (pre-reorg layout).
     if not _has_pth(V2_MODEL_DIR) and _has_pth(V2_DIR):
         print(f"[Init] v2: {V2_MODEL_DIR} empty; falling back to {V2_DIR} (root).")
         V2_MODEL_DIR = V2_DIR
-    if not os.path.isdir(V2_MODEL_DIR):
-        print(f"[Init] No {V2_MODEL_DIR} directory; running legacy-only. "
-              "Train v2 on Colab (see pipeline/README.md) to enable the comparison.")
-        return
-    _pths = sorted(f for f in os.listdir(V2_MODEL_DIR) if f.endswith('.pth'))
-    print(f"[Init] Loading v2 challenger models from {V2_MODEL_DIR} ({V2_HORIZON_MIN}min horizon).")
-    print(f"[Init] .pth files present: {_pths or 'NONE — did training save here?'}")
-    for symbol, _ in COINS:
-        entry = {}
-        for mt in ('lstm', 'tft'):
-            ckpt = os.path.join(V2_MODEL_DIR, f'v2_{mt}_{symbol}.pth')
-            if not os.path.exists(ckpt):
-                continue
-            try:
-                entry[mt] = v2_load_model(mt, symbol)
-                print(f"   -> v2 {mt.upper()} model for {symbol} loaded.")
-            except Exception as e:
-                print(f"   -> v2 {mt} load failed for {symbol}: {e}")
-        if entry:
-            models_v2_dict[symbol] = entry
+        V2_MODEL_DIRS[V2_HORIZON_MIN] = V2_DIR
+    for h in V2_HORIZONS:
+        hdir = V2_MODEL_DIRS[h]
+        if not os.path.isdir(hdir):
+            print(f"[Init] No {hdir} directory; skipping the {h}min v2 horizon.")
+            continue
+        _pths = sorted(f for f in os.listdir(hdir) if f.endswith('.pth'))
+        print(f"[Init] Loading v2 challenger models from {hdir} ({h}min horizon).")
+        print(f"[Init] .pth files present: {_pths or 'NONE — did training save here?'}")
+        for symbol, _ in COINS:
+            entry = {}
+            for mt in ('lstm', 'tft'):
+                ckpt = os.path.join(hdir, f'v2_{mt}_{symbol}.pth')
+                if not os.path.exists(ckpt):
+                    continue
+                try:
+                    entry[mt] = v2_load_model(mt, symbol, hdir)
+                    print(f"   -> v2 {mt.upper()} {h}min model for {symbol} loaded.")
+                except Exception as e:
+                    print(f"   -> v2 {mt} {h}min load failed for {symbol}: {e}")
+            if entry:
+                models_v2_dict.setdefault(symbol, {})[h] = entry
     if not models_v2_dict:
         print("[Init] No v2 artifacts found in models_v2/. Train them on Colab first "
               "(see pipeline/README.md), then they appear on the dashboard automatically.")
@@ -1308,11 +1323,12 @@ def run_inference(symbol, db_id):
         print(f"   -> ARIMA_v2 inference failed: {e}")
 
     # 7b-ii. v2 neural challengers (return-based price + direction head).
-    if symbol in models_v2_dict:
-        for mt, name in (('lstm', 'LSTM_v2'), ('tft', 'Transformer_v2')):
-            entry = models_v2_dict[symbol].get(mt)
+    for h, by_type in models_v2_dict.get(symbol, {}).items():
+        for mt, base in (('lstm', 'LSTM'), ('tft', 'Transformer')):
+            entry = by_type.get(mt)
             if not entry:
                 continue
+            name = v2_model_name(base, h)
             try:
                 mdl, scaler, meta = entry
                 is_hourly = meta.get("horizon") != 1
@@ -1531,23 +1547,27 @@ def seconds_to_next_boundary(interval_sec=300, offset_sec=10):
 def print_model_status():
     """Compact at-a-glance table of which models loaded per symbol (legacy + v2),
     instead of scrolling back through the long per-file fetch/load log."""
-    hdr = f"  {'Symbol':<9}{'LSTM':^7}{'TFT':^7}{'v2 LSTM':^9}{'v2 TFT':^8}"
-    print("\n" + "═" * 44)
+    cols = [(f'v2 LSTM {h}m', h, 'lstm') for h in V2_HORIZONS] + \
+           [(f'v2 TFT {h}m', h, 'tft') for h in V2_HORIZONS]
+    hdr = f"  {'Symbol':<9}{'LSTM':^7}{'TFT':^7}" + "".join(f"{c[0]:^13}" for c in cols)
+    width = len(hdr)
+    print("\n" + "═" * width)
     print("  📊 MODEL LOAD STATUS")
-    print("═" * 44)
+    print("═" * width)
     print(hdr)
     print("  " + "─" * (len(hdr) - 2))
     tick = lambda ok: ("✓" if ok else "·")
     for symbol, _ in COINS:
         v2 = models_v2_dict.get(symbol, {})
-        print(f"  {symbol:<9}{tick(symbol in models_lstm):^7}{tick(symbol in models_tft):^7}"
-              f"{tick('lstm' in v2):^9}{tick('tft' in v2):^8}")
+        row = f"  {symbol:<9}{tick(symbol in models_lstm):^7}{tick(symbol in models_tft):^7}"
+        row += "".join(f"{tick(mt in v2.get(h, {})):^13}" for _, h, mt in cols)
+        print(row)
     n_leg = len(models_lstm) + len(models_tft)
-    n_v2 = sum(len(v) for v in models_v2_dict.values())
-    print("═" * 44)
+    n_v2 = sum(len(mt_map) for by_h in models_v2_dict.values() for mt_map in by_h.values())
+    print("═" * width)
     print(f"  legacy: {n_leg} loaded   |   v2: {n_v2} loaded "
-          f"({V2_HORIZON_MIN}min horizon)")
-    print("═" * 44 + "\n")
+          f"(horizons: {', '.join(f'{h}min' for h in V2_HORIZONS)})")
+    print("═" * width + "\n")
 
 
 if __name__ == "__main__":
