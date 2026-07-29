@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const ChartUtils = require('../chart-utils.js');
 
 const { toMs, filterSanePoints, insertGapBreaks, computeModelErrors, computeModelStats, splitAtGaps, recentFocusRange } = ChartUtils;
+const { horizonOffsets } = ChartUtils;
 const { findOutages, formatOutage } = ChartUtils;
 const { buildPredictionLog, regressionMetrics, classificationMetrics, pesaranTimmermann, rollingMetrics, regimeBreakdown, tradingSim } = ChartUtils;
 
@@ -523,4 +524,76 @@ test('tradingSim takes no position on FLAT predictions', () => {
     const s = tradingSim([{ time: 0, baseline: 100, actual: 101, predDir: 'FLAT' }]);
     assert.strictEqual(s.trades, 0);
     assert.strictEqual(s.cumReturn, null);
+});
+
+// -------------------------------------------------- horizon awareness (v2 / 1H)
+//
+// The engine stores the two series with different timestamp conventions:
+//   legacy 5m : entry.time = the close the forecast was made from, target is +300
+//   v2   1h   : entry.time = the TARGET (hour_key + 3600), forecast made at t-3600
+// Scoring both over a fixed 5-minute window measures the wrong thing for v2.
+
+// closes rise by 1 every candle: closeAt[x] = 100 + (x - 300) / 300
+const hourCandles = Array.from({ length: 25 }, (_, i) => ({ time: i * 300, c: 100 + i }));
+const HC_LAST = 7200;                       // last (in-progress) candle open time
+
+test('horizonOffsets: legacy names keep the 5-minute convention', () => {
+    assert.deepStrictEqual(horizonOffsets('LSTM'), { base: 0, actual: 300 });
+    assert.deepStrictEqual(horizonOffsets('Ensemble'), { base: 0, actual: 300 });
+});
+
+test('horizonOffsets: _v2 names are target-stamped one hour back', () => {
+    assert.deepStrictEqual(horizonOffsets('LSTM_v2'), { base: -3600, actual: 0 });
+    assert.deepStrictEqual(horizonOffsets('ARIMA_v2'), { base: -3600, actual: 0 });
+});
+
+test('horizonOffsets: opts override the inferred defaults', () => {
+    assert.deepStrictEqual(horizonOffsets('LSTM', { horizonSec: 900 }), { base: 0, actual: 900 });
+    assert.deepStrictEqual(horizonOffsets('X', { stampIsTarget: true, horizonSec: 1800 }),
+        { base: -1800, actual: 0 });
+});
+
+test('buildPredictionLog scores a _v2 model against the close one hour earlier', () => {
+    // t=6900 -> baseline closeAt[3300]=110, actual closeAt[6900]=122
+    const log = buildPredictionLog([{ time: 6900, M_v2: 117 }], hourCandles, 'M_v2');
+    assert.strictEqual(log.length, 1);
+    assert.strictEqual(log[0].baseline, 110);   // NOT closeAt[6900]
+    assert.strictEqual(log[0].actual, 122);     // NOT closeAt[7200]
+    assert.strictEqual(log[0].predDir, 'UP');   // 117 > 110
+    assert.strictEqual(log[0].actDir, 'UP');    // 122 > 110
+    assert.strictEqual(log[0].correct, true);
+});
+
+test('buildPredictionLog: a _v2 entry whose realized candle is still open is not matured', () => {
+    // t=7500 would realize at closeAt[7500], whose candle (open 7200) is in progress
+    const log = buildPredictionLog([{ time: 7500, M_v2: 120 }], hourCandles, 'M_v2');
+    assert.strictEqual(log.length, 0);
+    // t=7200 realizes at closeAt[7200] (candle open 6900) -> closed, so it counts
+    const ok = buildPredictionLog([{ time: 7200, M_v2: 120 }], hourCandles, 'M_v2');
+    assert.strictEqual(ok.length, 1);
+    assert.strictEqual(ok[0].baseline, 111);    // closeAt[3600]
+    assert.strictEqual(ok[0].actual, 123);      // closeAt[7200]
+});
+
+test('buildPredictionLog: the same timestamps score differently per series', () => {
+    const v2 = buildPredictionLog([{ time: 6900, M_v2: 117 }], hourCandles, 'M_v2');
+    const legacy = buildPredictionLog([{ time: 6900, M: 117 }], hourCandles, 'M');
+    assert.strictEqual(v2[0].baseline, 110);        // one hour back
+    assert.strictEqual(legacy[0].baseline, 122);    // the close at t
+    assert.notStrictEqual(v2[0].actual, legacy[0].actual);
+});
+
+test('computeModelStats uses the same horizon rule as buildPredictionLog', () => {
+    const s = computeModelStats([{ time: 6900, M_v2: 117 }], hourCandles, 'M_v2');
+    assert.strictEqual(s.errorCount, 1);
+    assert.strictEqual(s.dirCount, 1);
+    assert.strictEqual(s.dirAccuracy, 100);         // UP predicted, UP realized
+    // |117 - 122| / 122 * 100
+    assert.ok(Math.abs(s.avgError - (5 / 122 * 100)) < 1e-9);
+});
+
+test('computeModelStats: legacy models are unaffected by the horizon change', () => {
+    const s = computeModelStats([{ time: 300, M: 103 }], evalCandles, 'M');
+    assert.strictEqual(s.errorCount, 1);
+    assert.strictEqual(s.dirAccuracy, 100);         // baseline 100, actual 102, pred 103
 });

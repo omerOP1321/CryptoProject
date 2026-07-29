@@ -149,15 +149,39 @@
     }
 
     /*
+     * The two prediction series timestamp their entries differently, so scoring
+     * both over a fixed 5-minute window measures the wrong thing for the hourly
+     * models. Resolve the offsets once, here, and let every scorer share them:
+     *
+     *   legacy 5-minute (LSTM / Transformer / ARIMA / Ensemble)
+     *     entry.time is the moment the forecast was made - the close of the
+     *     candle the model saw - and the target is the NEXT candle.
+     *       baseline = closeAt[t]          actual = closeAt[t + 300]
+     *
+     *   v2 hourly (*_v2)
+     *     entry.time is the TARGET itself: the engine writes
+     *     v2_target_time = hour_key + 3600 and forecasts from close(hour_key).
+     *       baseline = closeAt[t - 3600]   actual = closeAt[t]
+     *
+     * opts.horizonSec / opts.stampIsTarget override the defaults, which are
+     * inferred from the `_v2` suffix the engine and the UI both use.
+     */
+    function horizonOffsets(modelName, opts) {
+        opts = opts || {};
+        var stampIsTarget = opts.stampIsTarget === undefined
+            ? /_v2$/.test(String(modelName == null ? '' : modelName))
+            : !!opts.stampIsTarget;
+        var h = opts.horizonSec || (stampIsTarget ? 3600 : 300);
+        return stampIsTarget ? { base: -h, actual: 0 } : { base: 0, actual: h };
+    }
+
+    /*
      * Combined accuracy stats for a model over a time window.
      *
      * Relative error: |predicted - actual| / actual * 100, averaged.
-     * Directional accuracy: % of predictions whose direction matched the
-     * actual move. Models forecast 1 candle (5 min) ahead, and a prediction is
-     * stored at t = the predicted candle's open time. Its realized price is that
-     * candle's close = closeAt[t+300]; the baseline (price when the prediction
-     * was made) is the previous close = closeAt[t]. Predicted/actual moves are
-     * measured from that baseline; zero moves carry no direction.
+     * Directional accuracy: % of predictions whose direction matched the actual
+     * move, measured over the model's OWN horizon (see horizonOffsets). Zero
+     * moves carry no direction.
      *
      * opts: { fromSec, toSec, lastN } - window bounds (unix sec, inclusive)
      * and a cap on how many of the most recent matured predictions count.
@@ -174,6 +198,7 @@
         }
         var closeAt = new Map(hist5m.map(function (c) { return [c.time + 300, c.c]; }));
         var lastCandleTime = hist5m[hist5m.length - 1].time;
+        var off = horizonOffsets(modelName, opts);
 
         var matured = [];
         predHist.forEach(function (entry) {
@@ -181,18 +206,18 @@
             var pred = Number(raw);
             if (raw === null || raw === undefined || !Number.isFinite(pred)) return;
             var t = Number(entry.time);
-            // Matured only when the predicted candle (open t) has FULLY CLOSED, i.e. a
-            // later candle exists (t strictly before the last, in-progress candle).
-            // Using `t > lastCandleTime` would include the in-progress target candle
-            // and evaluate against its non-final running close.
-            if (!Number.isFinite(t) || t >= lastCandleTime || t < fromSec || t > toSec) return;
-            // Realized price = predicted candle's final close = closeAt[t+300]. Require it
-            // exactly (clean 300s grid); a gap here means we can't evaluate -> skip.
-            var actual = closeAt.get(t + 300);
+            // Matured only when the realized candle has FULLY CLOSED, i.e. its open
+            // time is strictly before the last, in-progress candle. Including it would
+            // evaluate against a non-final running close.
+            if (!Number.isFinite(t) || t < fromSec || t > toSec) return;
+            if (t + off.actual - 300 >= lastCandleTime) return;
+            // Realized price at the model's own horizon. Require it exactly (clean
+            // 300s grid); a gap here means we can't evaluate -> skip.
+            var actual = closeAt.get(t + off.actual);
             if (actual === undefined || actual <= 0) return;
-            // Baseline = price when the prediction was made = previous close = closeAt[t].
+            // Baseline = the close the forecast was made from.
             // If absent (data gap), direction is left unscored below.
-            var base = closeAt.get(t);
+            var base = closeAt.get(t + off.base);
             matured.push({
                 err: Math.abs(pred - actual) / actual * 100,
                 pred: pred,
@@ -242,10 +267,10 @@
     /* ======================================================================
      * EVALUATION METRICS
      * Pure functions for the prediction-history log and the analytics suite.
-     * All build on the same maturation rules as computeModelStats():
-     *   actual   = closeAt[t + 300]  (the predicted candle's final close)
-     *   baseline = closeAt[t]        (the close when the prediction was made)
-     * and the in-progress candle (t === lastCandleTime) is never matured.
+     * All build on the same maturation rules as computeModelStats(): the
+     * baseline and realized closes come from horizonOffsets(), so each model is
+     * scored over its OWN horizon, and a candle that has not fully closed is
+     * never matured.
      * ====================================================================== */
 
     /*
@@ -263,16 +288,18 @@
         if (!Array.isArray(predHist) || !Array.isArray(hist5m) || hist5m.length === 0) return [];
         var closeAt = new Map(hist5m.map(function (c) { return [c.time + 300, c.c]; }));
         var lastCandleTime = hist5m[hist5m.length - 1].time;
+        var off = horizonOffsets(modelName, opts);
         var out = [];
         predHist.forEach(function (entry) {
             var raw = entry[modelName];
             var pred = Number(raw);
             if (raw === null || raw === undefined || !Number.isFinite(pred)) return;
             var t = Number(entry.time);
-            if (!Number.isFinite(t) || t >= lastCandleTime || t < fromSec || t > toSec) return;
-            var actual = closeAt.get(t + 300);
+            if (!Number.isFinite(t) || t < fromSec || t > toSec) return;
+            if (t + off.actual - 300 >= lastCandleTime) return;
+            var actual = closeAt.get(t + off.actual);
             if (actual === undefined || actual <= 0) return;
-            var baseline = closeAt.get(t);
+            var baseline = closeAt.get(t + off.base);
             var errAbs = Math.abs(pred - actual);
             var errPct = actual !== 0 ? errAbs / Math.abs(actual) * 100 : null;
             var predDir = null, actDir = null, correct = null;
@@ -551,6 +578,7 @@
         insertGapBreaks: insertGapBreaks,
         computeModelErrors: computeModelErrors,
         computeModelStats: computeModelStats,
+        horizonOffsets: horizonOffsets,
         splitAtGaps: splitAtGaps,
         findOutages: findOutages,
         formatOutage: formatOutage,
