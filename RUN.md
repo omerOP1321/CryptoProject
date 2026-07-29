@@ -87,11 +87,44 @@ See **`server/README.md`** for the architecture, endpoints, and security notes.
 
 ---
 
+## Prediction backup & restore
+
+Every prediction is appended to `data/predictions_{SYMBOL}.jsonl` **before** the
+Supabase push and fsync'd, so a DB outage (or an egress lockout like 12–15 Jul
+2026) costs nothing: the engine keeps predicting and the journal keeps the record.
+
+`serving/replay_journal.py` is the other half — it puts the journal back.
+
+```bash
+python serving/replay_journal.py --verify
+```
+
+| Command | What it does |
+|---|---|
+| `--verify` | Compare journal against the DB. Writes nothing. Run this after any outage. |
+| `--dry-run` | Show exactly what a restore would add. Writes nothing. |
+| *(no flag)* | Restore missing entries into Supabase (asks for confirmation). |
+| `--snapshot` | Reverse: back up DB history the journal is missing into the journal. |
+| `--coin BTCUSDT` | Limit to one symbol. Repeatable. |
+| `--since 2026-07-12` | Limit the window (UTC date). Also `--until`. |
+
+Only the two prediction-history series are touched; candles, the live
+`predictions` block and `chosen_model` are left as the DB has them. On a
+timestamp collision the DB value wins unless you pass `--prefer-journal`.
+
+The journal is committed to git, so the local file is itself backed up. Run
+`--snapshot` after any long stretch where the engine wrote history the journal
+predates, then commit the result.
+
+---
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `serving/run_engine.command` / `.bat` | Foreground launchers (Mac / Windows) |
+| `serving/replay_journal.py` | Verify / restore predictions from the local journal |
+| `data/predictions_*.jsonl` | Append-only prediction journal (the durable record) |
 | `server/run_auth.command` / `.bat` | Auth API launchers (Mac / Windows) |
 | `server/` | Auth + user-management REST API (Node/Express/SQLite) |
 | `serving/service/install_service_*` | Install the always-on background service |

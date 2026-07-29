@@ -1496,6 +1496,8 @@ def run_inference(symbol, db_id):
     # 9. Push to Supabase
     push_to_supabase(results, db_id)
 
+    print_cycle_predictions(symbol, results, v2_hist_entries, v2_60m_entries, v2_target_time)
+
     if results["chosen_model"] != "None":
         best = results['predictions'][results['chosen_model']]
         print(f"   -> AI Prediction [{results['chosen_model']}]: ${best['price']:.2f} ({best['change_pct']:+.2f}%)")
@@ -1543,6 +1545,77 @@ def seconds_to_next_boundary(interval_sec=300, offset_sec=10):
     now = time.time()
     next_boundary = (now // interval_sec + 1) * interval_sec + offset_sec
     return max(1.0, next_boundary - now)
+
+def expected_models(symbol):
+    """Every model name this symbol SHOULD produce each cycle, per history series.
+
+    Derived from what actually loaded, so it is a real expectation and not a
+    wish list: if a checkpoint failed to load at init, it is not expected here
+    and the cycle report will not cry about it. Returns (legacy, v2) name lists.
+    """
+    legacy = []
+    if symbol in models_lstm:
+        legacy.append('LSTM')
+    if symbol in models_tft:
+        legacy.append('Transformer')
+    legacy += ['ARIMA', 'Ensemble']
+    v2 = ['ARIMA_v2']                       # statistical baseline, no artifact needed
+    for h, by_mt in sorted(models_v2_dict.get(symbol, {}).items(), reverse=True):
+        for mt, base in (('lstm', 'LSTM'), ('tft', 'Transformer')):
+            if mt in by_mt:
+                # 5-min v2 models ride the legacy series; longer horizons the v2 one.
+                (legacy if h == 5 else v2).append(v2_model_name(base, h))
+    return legacy, v2
+
+
+def print_cycle_predictions(symbol, results, legacy_entries, v2_entries, v2_target_time):
+    """Per-cycle report: every model that ran, what it said, and where it was
+    journalled — so a glance at the log answers "did all of them fire?" without
+    anyone having to dig through data/predictions_*.jsonl.
+
+    Anything expected but absent is printed as MISSING rather than silently
+    omitted; a model that quietly stops producing is exactly the failure the
+    journal exists to survive, so it must be loud here.
+    """
+    try:
+        preds = results.get("predictions", {})
+        exp_legacy, exp_v2 = expected_models(symbol)
+        # What the journal actually received this cycle (see the 7c/legacy blocks).
+        got_legacy = set(k for k in exp_legacy if preds.get(k)) | set(legacy_entries)
+        got_v2 = set(v2_entries)
+        n_exp = len(exp_legacy) + len(exp_v2)
+        n_got = len(got_legacy) + len(got_v2)
+
+        def fmt(name, series_got):
+            if name not in series_got:
+                return f"      {name:<22} MISSING"
+            p = preds.get(name, {})
+            price, chg = p.get('price'), p.get('change_pct')
+            sig = p.get('signal', '')
+            hz = p.get('horizon_min')
+            price_s = f"${price:,.4f}" if price is not None and price < 100 else \
+                      (f"${price:,.2f}" if price is not None else "—")
+            chg_s = f"{chg:+.3f}%" if chg is not None else ""
+            return f"      {name:<22}{price_s:>14} {chg_s:>9}  {sig:<8}{'' if hz is None else f'{hz}m'}"
+
+        print(f"   ┌─ models {symbol} ─ {n_got}/{n_exp} produced")
+        stamp = results.get('prediction_history', [])
+        leg_t = stamp[-1]['time'] if stamp else None
+        leg_when = datetime.fromtimestamp(leg_t).strftime('%H:%M') if leg_t else '?'
+        print(f"   │ legacy series  -> journalled for {leg_when} (+5m)")
+        for n in exp_legacy:
+            print("   │" + fmt(n, got_legacy))
+        v2_when = datetime.fromtimestamp(v2_target_time).strftime('%H:%M') if v2_target_time else '?'
+        print(f"   │ v2 series      -> journalled for {v2_when} (hourly grid)")
+        for n in exp_v2:
+            print("   │" + fmt(n, got_v2))
+        missing = [n for n in exp_legacy if n not in got_legacy] + \
+                  [n for n in exp_v2 if n not in got_v2]
+        print(f"   └─ {'✅ all models journalled' if not missing else '⚠️  MISSING: ' + ', '.join(missing)}")
+    except Exception as e:
+        # Reporting must never be able to break a cycle that otherwise succeeded.
+        print(f"   -> ⚠️ cycle report failed: {e}")
+
 
 def print_model_status():
     """Compact at-a-glance table of which models loaded per symbol (legacy + v2),
