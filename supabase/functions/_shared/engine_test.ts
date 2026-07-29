@@ -21,14 +21,24 @@ function preds(model: string, vals: Array<number | null>, t0 = 1_000_000): PredE
   return vals.map((v, i) => ({ time: t0 + i * HORIZON_SEC, [model]: v } as PredEntry));
 }
 
+/*
+ * Candle `time` is the OPEN time, and a prediction is stamped with the OPEN time
+ * of the candle it forecasts. So a prediction at T is baselined on the close at
+ * T (the candle that just closed) and realised against the close at T+300. That
+ * means the very first prediction has no preceding candle to baseline against
+ * and is correctly unscoreable — the fixtures below account for that.
+ */
 Deno.test("buildLog matures one candle ahead and computes long/short return", () => {
-  const h = candles([100, 110, 99]); // closes at t0, t0+300, t0+600
-  // Predict UP at t0 (pred>100): actual 110 -> correct, ret +0.10
-  // Predict DOWN at t0+300 (pred<110): actual 99 -> correct, ret +(99-110)/110*-1
-  const p = preds("M", [105, 100, 50]);
+  const h = candles([100, 110, 99, 105]); // opens t0 .. t0+900
+  const t0 = 1_000_000;
+  //  @t0      : no close at t0 to baseline against  -> skipped
+  //  @t0+300  : baseline 100, actual 110, pred UP   -> correct, ret +0.10
+  //  @t0+600  : baseline 110, actual  99, pred DOWN -> correct, ret +0.10
+  //  @t0+900  : realised candle still in progress   -> not matured
+  const p = preds("M", [105, 105, 100, 50]);
   const log = buildLog(p, h, "M");
-  // last candle (t0+600) cannot mature -> only 2 rows
   assertEquals(log.length, 2);
+  assertEquals(log[0].time, t0 + HORIZON_SEC);
   assertAlmostEquals(log[0].ret, 0.10, 1e-9);
   assert(log[0].correct);
   assertAlmostEquals(log[1].ret, (-1 * (99 - 110)) / 110, 1e-9);
@@ -36,12 +46,43 @@ Deno.test("buildLog matures one candle ahead and computes long/short return", ()
 });
 
 Deno.test("buildLog skips FLAT, non-finite and out-of-range predictions", () => {
-  const h = candles([100, 110, 120, 130]);
-  const p = preds("M", [100, null, 200, 50]); // first is FLAT (==baseline)
+  const h = candles([100, 110, 120, 130, 140]);
+  //  @t0      : unscoreable (no baseline)
+  //  @t0+300  : FLAT (pred == baseline 100)      -> dropped
+  //  @t0+600  : null                             -> dropped
+  //  @t0+900  : baseline 120, actual 130, UP     -> kept
+  //  @t0+1200 : realised candle in progress      -> not matured
+  const p = preds("M", [105, 100, null, 200, 50]);
   const log = buildLog(p, h, "M", -Infinity, Infinity);
-  // FLAT dropped, null dropped, last cannot mature -> 1 row (the pred=200@t0+600)
   assertEquals(log.length, 1);
-  assertAlmostEquals(log[0].ret, (120 - 130) > 0 ? 0 : (130 - 120) / 120, 1e-9);
+  assertAlmostEquals(log[0].ret, (130 - 120) / 120, 1e-9);
+});
+
+Deno.test("buildLog scores an hourly _v2 model against the close an hour earlier", () => {
+  // 14 candles: opens t0 .. t0+3900, so closes land at t0+300 .. t0+4200. The
+  // target below must not be the last (still in progress) candle, hence the 14th.
+  const closes = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 120, 121];
+  const h = candles(closes);
+  const t0 = 1_000_000;
+  // An hourly entry is stamped at its TARGET: baseline = close at T-3600,
+  // actual = close at T. T = t0+3900 -> baseline close@t0+300 = 100, actual = 120.
+  const p: PredEntry[] = [{ time: t0 + 3900, "LSTM_v2": 115 } as PredEntry];
+  const log = buildLog(p, h, "LSTM_v2");
+  assertEquals(log.length, 1);
+  assertEquals(log[0].baseline, 100);
+  assertEquals(log[0].actual, 120);
+  assertAlmostEquals(log[0].ret, (120 - 100) / 100, 1e-9); // predicted UP, went up
+  assert(log[0].correct);
+});
+
+Deno.test("buildLog treats a _v2_5m model as 5-minute, not hourly", () => {
+  // Same fixture as the 5-minute test: the 5-min v2 challengers share the legacy
+  // convention, so the trailing-_v2 hourly rule must NOT catch LSTM_v2_5m.
+  const h = candles([100, 110, 99, 105]);
+  const p = preds("LSTM_v2_5m", [105, 105, 100, 50]);
+  const log = buildLog(p, h, "LSTM_v2_5m");
+  assertEquals(log.length, 2);
+  assertAlmostEquals(log[0].ret, 0.10, 1e-9);
 });
 
 Deno.test("buildLog respects the date window", () => {
@@ -53,8 +94,9 @@ Deno.test("buildLog respects the date window", () => {
 });
 
 Deno.test("simulateModel: all-winning long run compounds to expected value", () => {
-  const h = candles([100, 110, 121]); // +10% each step
-  const p = preds("M", [105, 115]); // predict UP twice
+  const h = candles([100, 110, 121, 133.1]); // +10% each step
+  // First entry is unscoreable (no baseline); the next two mature as +10% each.
+  const p = preds("M", [105, 105, 115, 125]);
   const log = buildLog(p, h, "M");
   const m = simulateModel("M", log, 1000, null);
   assertEquals(m.trades, 2);

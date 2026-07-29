@@ -553,6 +553,28 @@ test('horizonOffsets: opts override the inferred defaults', () => {
         { base: -1800, actual: 0 });
 });
 
+// The 5-minute v2 challengers are v2 models that are NOT hourly. They are named
+// *_v2_5m precisely so the trailing-_v2 hourly rule does not catch them; if this
+// ever regresses they would be scored over the wrong horizon and silently look
+// far worse than they are.
+test('horizonOffsets: _v2_5m models keep the 5-minute convention', () => {
+    assert.deepStrictEqual(horizonOffsets('LSTM_v2_5m'), { base: 0, actual: 300 });
+    assert.deepStrictEqual(horizonOffsets('Transformer_v2_5m'), { base: 0, actual: 300 });
+    // ...while their hourly siblings stay target-stamped.
+    assert.deepStrictEqual(horizonOffsets('LSTM_v2'), { base: -3600, actual: 0 });
+});
+
+test('computeModelStats scores a _v2_5m model exactly like a legacy 5-min model', () => {
+    const hist = [
+        { time: 300, LSTM: 101, LSTM_v2_5m: 101 },
+        { time: 600, LSTM: 103, LSTM_v2_5m: 103 },
+        { time: 900, LSTM: 99, LSTM_v2_5m: 99 }
+    ];
+    const legacy = computeModelStats(hist, candles, 'LSTM');
+    const v25m = computeModelStats(hist, candles, 'LSTM_v2_5m');
+    assert.deepStrictEqual(v25m, legacy);
+});
+
 test('buildPredictionLog scores a _v2 model against the close one hour earlier', () => {
     // t=6900 -> baseline closeAt[3300]=110, actual closeAt[6900]=122
     const log = buildPredictionLog([{ time: 6900, M_v2: 117 }], hourCandles, 'M_v2');

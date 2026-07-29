@@ -33,10 +33,18 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-// Model -> which prediction-history array it lives in. v2 challengers target a
-// 1h horizon and are stored separately; mirrors the dashboard's MODELS config.
-const MODELS = ["LSTM", "Transformer", "ARIMA", "LSTM_v2", "Transformer_v2", "ARIMA_v2"];
-const isV2 = (m: string) => m.endsWith("_v2");
+// Model -> which prediction-history array it lives in. Mirrors the dashboard's
+// MODELS config; keep the two in sync or the UI will offer an allocation this
+// function rejects. `isHourly` is about the HORIZON, not the v2 generation:
+// hourly models are stored separately, while every 5-minute model (legacy and
+// the v2 5-min challengers) shares prediction_history. LSTM_v2_5m is v2 but not
+// hourly, which is why the trailing-`_v2` test is the right one.
+const MODELS = [
+  "LSTM", "Transformer", "ARIMA",
+  "LSTM_v2_5m", "Transformer_v2_5m",
+  "LSTM_v2", "Transformer_v2", "ARIMA_v2",
+];
+const isHourly = (m: string) => /_v2$/.test(m);
 const COINS: Record<string, number> = { BTCUSDT: 1, ETHUSDT: 2, XRPUSDT: 3 };
 
 const MAX_AMOUNT = 1e12;
@@ -105,7 +113,7 @@ function hist5mOf(payload: Record<string, unknown>): Candle[] {
 }
 
 function predHistOf(payload: Record<string, unknown>, model: string): PredEntry[] {
-  return (isV2(model)
+  return (isHourly(model)
     ? (payload.prediction_history_v2 as PredEntry[])
     : (payload.prediction_history as PredEntry[])) || [];
 }

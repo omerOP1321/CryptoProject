@@ -39,7 +39,7 @@
             const reg = CU.regressionMetrics(log);
             const cls = CU.classificationMetrics(log);
             const pt = CU.pesaranTimmermann(log);
-            const sim = CU.tradingSim(log, { barSec: MODELS.isV2(m) ? 3600 : 300 });
+            const sim = CU.tradingSim(log, { barSec: MODELS.isHourly(m) ? 3600 : 300 });
             out.push({
                 model: m, log: log,
                 n: log.length,

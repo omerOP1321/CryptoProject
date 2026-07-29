@@ -9,10 +9,10 @@
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-client.js?v=13"></script>
-    <script src="chart-utils.js?v=14"></script>
-    <script src="analytics-ui.js?v=13"></script>
+    <script src="chart-utils.js?v=15"></script>
+    <script src="analytics-ui.js?v=14"></script>
     <script src="auth.js?v=19"></script>
-    <link rel="stylesheet" href="styles.css?v=16">
+    <link rel="stylesheet" href="styles.css?v=17">
 </head>
 <body>
     <div class="blob b1"></div>
@@ -104,7 +104,7 @@
             </div>
 
             <div class="footer">
-                <span>Legacy models target +5 min · v2 challengers target +60 min (anchored to clock hour). Hover the chart for OHLC.</span>
+                <span>5-minute models (legacy + v2) target +5 min · 1-hour models target +60 min (anchored to clock hour). Hover the chart for OHLC.</span>
                 <span>Powered by Supabase &amp; TradingView</span>
             </div>
             <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
@@ -132,7 +132,10 @@
 
         let activeCoin = 'BTCUSDT';
         let activeCoinId = 1;
-        let visibleModels = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'];
+        // Seeded from ALL_MODELS (declared below, hoisted const is fine at call time)
+        // so a newly deployed model is visible by default instead of being silently
+        // hidden by a stale hard-coded list.
+        let visibleModels = null;
         let statsOpen = false;
 
         // Time range selection. All ranges render 5-minute candles. The backend now
@@ -168,31 +171,47 @@
 
         // Model accent colors (new design palette).
         const MODEL_COLORS = {
-            'LSTM': '#3b9eff',           // royal blue
-            'Transformer': '#e25bd0',    // magenta
-            'ARIMA': '#22d3ee',          // cyan (leading)
-            'LSTM_v2': '#f5a524',        // amber (challenger)
-            'Transformer_v2': '#818cf8', // indigo (challenger)
-            'ARIMA_v2': '#34d399'        // emerald (1H baseline)
+            'LSTM': '#3b9eff',              // royal blue
+            'Transformer': '#e25bd0',       // magenta
+            'ARIMA': '#22d3ee',             // cyan (leading)
+            'LSTM_v2_5m': '#fb7185',        // rose (5M challenger)
+            'Transformer_v2_5m': '#a855f7', // violet (5M challenger)
+            'LSTM_v2': '#f5a524',           // amber (1H challenger)
+            'Transformer_v2': '#818cf8',    // indigo (1H challenger)
+            'ARIMA_v2': '#34d399'           // emerald (1H baseline)
         };
 
         const MODEL_LABELS = {
             'LSTM': 'LSTM (5M)',
             'Transformer': 'TFT (5M)',
             'ARIMA': 'ARIMA',
+            'LSTM_v2_5m': 'LSTM v2 (5M)',
+            'Transformer_v2_5m': 'TFT v2 (5M)',
             'LSTM_v2': 'LSTM (1H)',
             'Transformer_v2': 'TFT (1H)',
             'ARIMA_v2': 'ARIMA (1H)'
         };
         const MODEL_TAGS = {
             'LSTM': 'Legacy', 'Transformer': 'Legacy', 'ARIMA': 'Base',
+            'LSTM_v2_5m': 'V2', 'Transformer_v2_5m': 'V2',
             'LSTM_v2': 'V2', 'Transformer_v2': 'V2', 'ARIMA_v2': 'Base'
         };
         const labelOf = m => MODEL_LABELS[m] || m;
 
-        // Card / legend ordering. The leading model is chosen dynamically at render time.
-        const ALL_MODELS = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'];
-        const LEGEND_ORDER = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'];
+        /*
+         * Which prediction series a model reads from — NOT whether it is a v2 model.
+         * Hourly entries are stamped with their target time in prediction_history_v2;
+         * every 5-minute model (legacy and the v2 5-min challengers alike) lands in
+         * prediction_history. LSTM_v2_5m is v2 but NOT hourly, hence the horizon name.
+         */
+        const isHourlyModel = m => /_v2$/.test(m);
+
+        // Card / legend ordering: 5-minute group first, then hourly. The leading model
+        // is chosen dynamically at render time.
+        const ALL_MODELS = ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2_5m', 'Transformer_v2_5m',
+                            'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'];
+        const LEGEND_ORDER = ALL_MODELS.slice();
+        visibleModels = ALL_MODELS.slice();
 
         const COIN_META = {
             'BTCUSDT': { name: 'Bitcoin', sym: 'BTC' },
@@ -472,7 +491,7 @@
                 const preds = globalPayload.predictions || {};
                 const pd = preds[modelName];
                 if (!pd) return null;
-                const isV2 = modelName.endsWith('_v2');
+                const isV2 = isHourlyModel(modelName);
                 const histForModel = isV2 ? (globalPayload.prediction_history_v2 || [])
                                           : (globalPayload.prediction_history || []);
                 const stats = ChartUtils.computeModelStats(histForModel, hist5m, modelName,
@@ -575,7 +594,10 @@
             function renderModelCards(fromSec, toSec, hist5m, formattedHistory, lastPrice) {
                 const grid = document.getElementById('model-grid');
                 const ranked = rankModels(visibleModels, fromSec, toSec, hist5m, formattedHistory, lastPrice);
-                grid.style.setProperty('--cols', Math.max(1, ranked.length));
+                // Cap at 4 columns: with 8 models a single row squeezed every card below
+                // a readable width. Wrapping to 4x2 keeps the cards at the size they were
+                // designed for, and the ranking still reads left-to-right, top-to-bottom.
+                grid.style.setProperty('--cols', Math.min(4, Math.max(1, ranked.length)));
                 if (!ranked.length) {
                     grid.innerHTML = '<div class="cards-empty">No models selected — re-enable one from the chart legend below.</div>';
                     _lastTop = null;
@@ -766,7 +788,7 @@
                     const changePct = predData.change_pct;
                     const color = MODEL_COLORS[modelName];
 
-                    const isV2 = modelName.endsWith('_v2');
+                    const isV2 = isHourlyModel(modelName);
                     const horizonMin = predData.horizon_min || 5;
                     const horizonSec = horizonMin * 60;
                     const futureTime = isV2
@@ -1000,7 +1022,7 @@
                 // Per-model stats
                 const info = {};
                 LEGEND_ORDER.forEach(m => {
-                    const isV2 = m.endsWith('_v2');
+                    const isV2 = isHourlyModel(m);
                     const hist = isV2 ? predHistV2 : predHist;
                     info[m] = ChartUtils.computeModelStats(hist, hist5m, m, { fromSec, toSec });
                 });
@@ -1046,8 +1068,12 @@
                     </div>
                 </div>`;
 
-                // 7-session line chart for the three base/legacy models
-                const sessModels = ['ARIMA', 'LSTM', 'Transformer'];
+                // 7-session line chart. Every 5-minute model belongs here — they all
+                // read prediction_history and are scored over the same +5m horizon, so
+                // the lines are directly comparable. The hourly models are deliberately
+                // left out: their sessions are a different length, so overlaying them
+                // would invite a comparison that isn't like-for-like.
+                const sessModels = ALL_MODELS.filter(m => !isHourlyModel(m));
                 const series = sessModels.map(m => ({
                     name: labelOf(m),
                     color: MODEL_COLORS[m],

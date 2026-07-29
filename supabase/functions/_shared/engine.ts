@@ -15,12 +15,41 @@
  * sets it — current numbers are raw gross performance, as required.
  *
  * Maturation mirrors the dashboard's chart-utils.buildPredictionLog so the
- * Investment page is consistent with the Analytics page: a prediction made at
- * time t is scored against the close one candle (HORIZON_SEC) later, with the
- * close at t as the baseline.
+ * Investment page is consistent with the Analytics page — including the candle
+ * key convention (close time, not open time) and the per-model horizon: see
+ * horizonOf below. Getting either wrong scores the model against the wrong
+ * candle, which is silent and looks plausible.
  */
 
 export const HORIZON_SEC = 300; // one 5-minute candle ahead (matches the dashboard)
+export const HOURLY_HORIZON_SEC = 3600;
+
+/**
+ * Where a model's baseline and realised close sit relative to its journal
+ * timestamp — the Deno mirror of chart-utils.horizonOffsets, and it must stay in
+ * step with it or the Investment page and the Analytics page will report
+ * different numbers for the same model.
+ *
+ *   5-minute models (legacy AND the v2 5-min challengers)
+ *     entry.time is when the forecast was made; the target is the next candle.
+ *       baseline = closeAt[t]           actual = closeAt[t + 300]
+ *
+ *   hourly models (trailing `_v2`)
+ *     entry.time is the TARGET itself (the engine writes hour_key + 3600).
+ *       baseline = closeAt[t - 3600]    actual = closeAt[t]
+ *
+ * Named for the horizon, not the generation: LSTM_v2_5m is a v2 model that is
+ * NOT hourly, so the trailing-`_v2` test is what separates the two conventions.
+ */
+export function horizonOf(model: string): {
+  base: number;
+  actual: number;
+  horizonSec: number;
+} {
+  return /_v2$/.test(model)
+    ? { base: -HOURLY_HORIZON_SEC, actual: 0, horizonSec: HOURLY_HORIZON_SEC }
+    : { base: 0, actual: HORIZON_SEC, horizonSec: HORIZON_SEC };
+}
 
 export interface Candle {
   time: number; // unix seconds
@@ -81,7 +110,10 @@ export interface BuyHoldMetrics {
   equityCurve: Array<{ time: number; value: number }>;
 }
 
-const PERIODS_PER_YEAR = (365 * 24 * 3600) / HORIZON_SEC;
+// Annualisation factor depends on how often the model actually trades: an hourly
+// model takes 12x fewer positions than a 5-minute one, so scaling both by the
+// 5-minute period count would inflate the hourly Sharpe/volatility by sqrt(12).
+const periodsPerYear = (horizonSec: number) => (365 * 24 * 3600) / horizonSec;
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -119,20 +151,28 @@ export function buildLog(
   toSec = Infinity,
 ): LogRow[] {
   if (!Array.isArray(predHist) || !Array.isArray(hist5m) || hist5m.length === 0) return [];
+  // Keyed by the candle's CLOSE time (payload candles carry their OPEN time), so
+  // closeAt.get(x) is "the price at x". chart-utils.js keys it the same way, and
+  // the two must match or the Investment page and the Analytics page disagree.
   const closeAt = new Map<number, number>();
-  for (const c of hist5m) closeAt.set(c.time, c.c);
+  for (const c of hist5m) closeAt.set(c.time + HORIZON_SEC, c.c);
   const lastCandleTime = hist5m[hist5m.length - 1].time;
 
+  const off = horizonOf(model);
   const out: LogRow[] = [];
   for (const entry of predHist) {
     const raw = entry[model];
     const pred = Number(raw);
     if (raw === null || raw === undefined || !Number.isFinite(pred)) continue;
     const t = Number(entry.time);
-    if (!Number.isFinite(t) || t >= lastCandleTime || t < fromSec || t > toSec) continue;
+    if (!Number.isFinite(t) || t < fromSec || t > toSec) continue;
+    // Matured only when the realised candle has FULLY CLOSED, i.e. its open time
+    // is strictly before the last, in-progress candle. Same guard as
+    // chart-utils.buildPredictionLog.
+    if (t + off.actual - HORIZON_SEC >= lastCandleTime) continue;
 
-    const baseline = closeAt.get(t);
-    const actual = closeAt.get(t + HORIZON_SEC);
+    const baseline = closeAt.get(t + off.base);
+    const actual = closeAt.get(t + off.actual);
     if (baseline === undefined || baseline <= 0 || actual === undefined || actual <= 0) continue;
 
     const predDir = pred - baseline;
@@ -170,6 +210,7 @@ export function simulateReturns(
 ): SimMetrics {
   const n = rets.length;
   const netRets = fee ? rets.map((r) => r - fee) : rets;
+  const PERIODS_PER_YEAR = periodsPerYear(horizonOf(model).horizonSec);
 
   let equity = 1, peak = 1, maxDd = 0;
   let wins = 0, losses = 0, gains = 0, lossSum = 0;

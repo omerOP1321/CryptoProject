@@ -9,21 +9,34 @@
     var CU = root.ChartUtils;
 
     // ----- Single source of truth for model identity (colors/labels/tags) -----
+    // Ordered 5-minute group first, then the hourly group, so the cards and legend
+    // read as two horizons rather than eight unrelated models.
     var MODELS = {
-        order: ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'],
+        order: ['LSTM', 'Transformer', 'ARIMA', 'LSTM_v2_5m', 'Transformer_v2_5m',
+                'LSTM_v2', 'Transformer_v2', 'ARIMA_v2'],
         colors: {
             'LSTM': '#3b9eff', 'Transformer': '#e25bd0', 'ARIMA': '#22d3ee',
+            'LSTM_v2_5m': '#fb7185', 'Transformer_v2_5m': '#a855f7',
             'LSTM_v2': '#f5a524', 'Transformer_v2': '#818cf8', 'ARIMA_v2': '#34d399'
         },
         labels: {
             'LSTM': 'LSTM (5M)', 'Transformer': 'TFT (5M)', 'ARIMA': 'ARIMA',
+            'LSTM_v2_5m': 'LSTM v2 (5M)', 'Transformer_v2_5m': 'TFT v2 (5M)',
             'LSTM_v2': 'LSTM (1H)', 'Transformer_v2': 'TFT (1H)', 'ARIMA_v2': 'ARIMA (1H)'
         },
         tags: {
             'LSTM': 'Legacy', 'Transformer': 'Legacy', 'ARIMA': 'Base',
+            'LSTM_v2_5m': 'V2', 'Transformer_v2_5m': 'V2',
             'LSTM_v2': 'V2', 'Transformer_v2': 'V2', 'ARIMA_v2': 'Base'
         },
-        isV2: function (m) { return m.endsWith('_v2'); },
+        /*
+         * Which prediction series a model belongs to — NOT whether it is a v2 model.
+         * The engine stamps hourly entries with their target time in
+         * prediction_history_v2, while every 5-minute model (legacy AND the v2 5-min
+         * challengers) lands in prediction_history. LSTM_v2_5m is a v2 model that is
+         * NOT hourly, which is exactly why this is named for the horizon.
+         */
+        isHourly: function (m) { return /_v2$/.test(m); },
         labelOf: function (m) { return MODELS.labels[m] || m; }
     };
 
@@ -346,7 +359,7 @@
 
     // ------------------------------------------------------ data helpers
     function predHistFor(payload, modelName) {
-        return MODELS.isV2(modelName)
+        return MODELS.isHourly(modelName)
             ? (payload.prediction_history_v2 || [])
             : (payload.prediction_history || []);
     }
@@ -367,7 +380,7 @@
         var pt = CU.pesaranTimmermann(log);
         var roll = CU.rollingMetrics(log, 12);
         var regime = CU.regimeBreakdown(log, hist5m);
-        var sim = CU.tradingSim(log, { barSec: MODELS.isV2(modelName) ? 3600 : 300 });
+        var sim = CU.tradingSim(log, { barSec: MODELS.isHourly(modelName) ? 3600 : 300 });
 
         // significance badge
         var ptBadge;
