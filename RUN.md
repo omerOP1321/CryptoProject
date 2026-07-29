@@ -118,6 +118,62 @@ predates, then commit the result.
 
 ---
 
+## Deploying the website
+
+Two independent deploy targets. **Pushing to `main` is not enough** — check both.
+
+### 1. Frontend (Vercel) — ⚠️ auto-deploy currently broken
+
+`website/` is served from https://crypto-project-peach-three.vercel.app and is
+*supposed* to redeploy on every push to `main`.
+
+As of **2026-07-29 it does not.** The last `vercel[bot]` production deployment was
+2026-07-18; 11 commits have landed since and none deployed. New commits receive no
+status checks at all, so the webhook is not reaching Vercel. The live site is
+serving 11-day-old assets.
+
+Check before claiming a frontend change is live:
+
+```bash
+gh api repos/omerOP1321/CryptoProject/deployments --jq '.[0].created_at'
+```
+
+If that timestamp predates your commit, the site does **not** have your change,
+however green the push looked. Confirm by content, not by version string:
+
+```bash
+curl -s https://crypto-project-peach-three.vercel.app/index.html | grep -c _v2_5m
+```
+
+To fix: open the Vercel dashboard for the project (it sits under the
+**omerOP1321** account, not `ofirzohar11`), then Settings → Git and reconnect the
+repository; or trigger Deployments → Redeploy manually. If manual works but
+automatic does not, the GitHub webhook is dead — repo Settings → Webhooks. Worth
+ruling out a plan/usage limit too, given the Supabase egress lockout in July.
+
+### 2. Investment backend (Supabase Edge Function)
+
+The Investment page calls the `simulate` Edge Function, which keeps its **own**
+model allow-list. Add a model to the dashboard without deploying this and the page
+fails with `Unknown model: <name>`.
+
+```bash
+supabase login
+```
+
+```bash
+supabase functions deploy simulate
+```
+
+Run the tests first — they cover the horizon and candle-key conventions that must
+stay in step with `website/chart-utils.js`:
+
+```bash
+deno test supabase/functions/_shared/
+```
+
+---
+
 ## Files
 
 | File | Purpose |
