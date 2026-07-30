@@ -7,10 +7,10 @@
     <title>Model Analytics · Crypto AI Prediction</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-client.js?v=13"></script>
-    <script src="chart-utils.js?v=15"></script>
-    <script src="analytics-ui.js?v=14"></script>
-    <script src="auth.js?v=19"></script>
-    <link rel="stylesheet" href="styles.css?v=17">
+    <script src="chart-utils.js?v=17"></script>
+    <script src="analytics-ui.js?v=16"></script>
+    <script src="auth.js?v=20"></script>
+    <link rel="stylesheet" href="styles.css?v=19">
 </head>
 <body>
     <div class="blob b1"></div>
@@ -34,6 +34,27 @@
                 <button class="coin-tab" data-id="3" data-sym="XRP" data-name="Ripple"><b>XRP</b><span>Ripple</span></button>
             </div>
             <div class="market-note" id="coin-note">All models · click a row for full detail</div>
+        </div>
+
+        <!-- Time window for every metric and chart below. Same seg-btn markup as the
+             dashboard's chart range bar so both pages read as one control. -->
+        <div class="ana-rangebar">
+            <div class="range-seg" id="range-seg" role="group" aria-label="Analytics time range">
+                <button class="seg-btn" data-range="TODAY">Today</button>
+                <button class="seg-btn" data-range="24H">24 Hours</button>
+                <button class="seg-btn" data-range="7D">7 Days</button>
+                <button class="seg-btn" data-range="30D">30 Days</button>
+                <button class="seg-btn active" data-range="ALL">All</button>
+                <button class="seg-btn" data-range="custom">Custom</button>
+            </div>
+            <div class="range-note" id="range-note"></div>
+        </div>
+        <div class="custom-range" id="custom-range-inputs" style="display: none;">
+            <input type="datetime-local" id="custom-from" aria-label="Range start">
+            <span class="control-label">to</span>
+            <input type="datetime-local" id="custom-to" aria-label="Range end">
+            <button class="chip" id="custom-apply">Apply</button>
+            <span class="range-err" id="custom-err"></span>
         </div>
 
         <div id="loading" class="loading-spinner">Connecting to Supabase…</div>
@@ -70,6 +91,6 @@
         <div class="credits">created by: Ofir Zohar, Omer Peretz, Ofir Fichman, Molly</div>
     </div>
 
-    <script src="analytics-page.js?v=13"></script>
+    <script src="analytics-page.js?v=16"></script>
 </body>
 </html>

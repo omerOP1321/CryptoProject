@@ -218,6 +218,8 @@
     var NAV_ITEMS = [
         { href: 'analytics.html', label: 'Analytics',
           icon: '<path d="M3 17l6-6 4 4 7-7"/><path d="M14 7h6v6"/>' },
+        { href: 'conclusions.html', label: 'Conclusions',
+          icon: '<path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2z"/>' },
         { href: 'investment.html', label: 'Investments',
           icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>' },
         { href: 'about.html', label: 'About',

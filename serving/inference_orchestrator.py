@@ -25,6 +25,7 @@ import torch
 import torch.nn as nn
 import ta
 import math
+import statistics
 from datetime import datetime, timedelta, timezone
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.arima.model import ARIMA
@@ -273,6 +274,84 @@ V2_FEATURES = [
 ]
 _V2_EPS = 1e-9
 
+# --- v2 directional calibration -------------------------------------------------
+# The v2 return-regression head carries a large constant offset. Measured over 11 days
+# of live predictions (2026-07-19 -> 2026-07-30), |mean| / sd of the predicted move:
+#
+#     BTC LSTM_v2      1.34   -> predicted UP in   8% of hours (market rose 51.5%)
+#     XRP LSTM_v2      1.59   -> predicted UP in  95% of hours
+#     XRP LSTM_v2_5m   0.87   -> predicted UP in  15% of candles
+#     BTC LSTM_v2_5m   0.77   -> predicted UP in  21% of candles
+#
+# When the constant offset exceeds the model's own spread, sign(pred - base) stops
+# tracking the model's signal and becomes a near-fixed directional call, which pins
+# directional accuracy to the market's base rate. (The legacy models do NOT have this:
+# their ratio is 0.02-0.06, so they are left untouched.)
+#
+# Fix: subtract a rolling MEDIAN of the model's own recent raw predictions. Median, not
+# mean, so one spike can't move the correction. Strictly causal - the offset is taken
+# from the samples that came BEFORE the current one, which is then appended. Removing a
+# systematic bias also cannot hurt MAE; bias is a component of error.
+#
+# The classifier head (LONG/NEUTRAL/SHORT) was the alternative. It is left publishing as
+# it always did: every consumer (chart-utils, the Deno investment engine, the analytics
+# suite) derives direction from the PRICE, so routing direction through the classifier
+# instead would have meant changing the meaning of the published price everywhere.
+V2_CALIB_PATH = os.path.join(DATA_DIR, 'v2_calibration.json')
+V2_CALIB_WINDOW = {60: 168, 5: 576}      # hourly: 7 days of hours; 5-min: 2 days
+V2_CALIB_MIN = 24                        # below this, publish raw (offset 0)
+_v2_calib = {}                           # "SYMBOL|Model" -> {"rets": [...], "last_key": int}
+
+
+def v2_calib_load():
+    """Warm the de-bias state from disk so a restart doesn't reset every model to a
+    raw, uncorrected offset for the next N cycles. Best-effort by design."""
+    global _v2_calib
+    try:
+        if os.path.exists(V2_CALIB_PATH):
+            with open(V2_CALIB_PATH) as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                _v2_calib = loaded
+                print(f"[Init] v2 calibration warm-started for {len(_v2_calib)} model/coin pairs.")
+    except Exception as e:
+        print(f"[Init] ⚠️ Could not load v2 calibration ({e}); starting cold.")
+        _v2_calib = {}
+
+
+def v2_calib_save():
+    """Persist atomically: a half-written state file would poison every later warm start."""
+    try:
+        tmp = V2_CALIB_PATH + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(_v2_calib, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, V2_CALIB_PATH)
+    except Exception as e:
+        print(f"   -> ⚠️ Could not save v2 calibration: {e}")
+
+
+def v2_debias_offset(calib_key, raw_ret, horizon_min, sample_key=None):
+    """Return the causal de-bias offset for `raw_ret`, and record the sample.
+
+    The offset is the median of the PREVIOUS samples only — the current prediction is
+    appended afterwards, so a forecast is never corrected using itself. `sample_key`
+    (the hour/candle the forecast belongs to) makes the append idempotent: a restart
+    mid-hour re-runs the same forecast, and that must not double-count it.
+    """
+    st = _v2_calib.setdefault(calib_key, {"rets": [], "last_key": None})
+    rets = st["rets"]
+    offset = statistics.median(rets) if len(rets) >= V2_CALIB_MIN else 0.0
+    if sample_key is None or st.get("last_key") != sample_key:
+        rets.append(float(raw_ret))
+        st["last_key"] = sample_key
+        cap = V2_CALIB_WINDOW.get(horizon_min, 288)
+        if len(rets) > cap:
+            del rets[:len(rets) - cap]
+    return offset
+
+
 def _v2_causal_z(series, window):
     mean = series.rolling(window, min_periods=window // 4).mean()
     std = series.rolling(window, min_periods=window // 4).std()
@@ -440,7 +519,14 @@ def v2_load_model(model_type, symbol, model_dir=None):
     model.to(DEVICE).eval()
     return model, scaler, meta
 
-def v2_predict(df_raw, model, scaler, meta):
+def v2_predict(df_raw, model, scaler, meta, calib_key=None, sample_key=None):
+    """Run one v2 forecast.
+
+    calib_key ("SYMBOL|ModelName") turns on the causal de-bias described at
+    V2_CALIB_PATH: the model's constant return offset is removed before the price is
+    reconstructed, so sign(price - base) reflects the model's signal instead of its
+    intercept. Omit it (default) and the raw prediction is published unchanged.
+    """
     feats = meta['features']
     seq = meta['seq_length']
     df = compute_features_v2(df_raw).dropna()
@@ -455,12 +541,24 @@ def v2_predict(df_raw, model, scaler, meta):
     probs = torch.softmax(logits, -1).cpu().numpy().ravel()
     cls = int(probs.argmax())
     signal = {0: 'SHORT', 1: 'NEUTRAL', 2: 'LONG'}[cls]
+    horizon_min = meta['horizon'] * 5
+
+    raw_ret = pred_ret
+    offset = 0.0
+    if calib_key:
+        offset = v2_debias_offset(calib_key, raw_ret, horizon_min, sample_key)
+        pred_ret = raw_ret - offset
+
     pred_price = base_price * np.exp(pred_ret)
     return {
         "val": pred_ret, "price": float(pred_price),
         "change_pct": (np.exp(pred_ret) - 1) * 100, "signal": signal,
         "class_probs": {V2_CLASS_NAMES[i]: float(probs[i]) for i in range(len(V2_CLASS_NAMES))},
-        "horizon_min": meta['horizon'] * 5,
+        "horizon_min": horizon_min,
+        # Kept for transparency/debugging: what the head emitted before calibration
+        # and how much was removed. Additive - no consumer depends on them.
+        "raw_change_pct": (np.exp(raw_ret) - 1) * 100,
+        "debias_offset_pct": (np.exp(offset) - 1) * 100,
     }
 
 
@@ -761,10 +859,15 @@ def infer_arima_hourly(df_upto_hour):
     the horizon it is scored against, the same reasoning behind the 5-min
     infer_arima using steps=1.
 
-    df_upto_hour: history filtered to open_time <= the hour anchor (see
+    df_upto_hour: history filtered to open_time < the hour anchor (see
     run_inference), so the forecast is reproducible for every 5-min cycle within
-    the hour. Returns the forecast price, or None if ARIMA can't fit / too little
-    data.
+    the hour. The strict `<` matters here: it keeps the in-progress candle out, so
+    every 1h bucket below aggregates a FULL hour of 5-min candles and the series
+    ends exactly on the hour boundary. Including it gave the last bucket a single
+    ~10-second candle, making the final differenced observation a 10-second return
+    posing as an hourly one - which collapsed the AR(2) forecast onto the previous
+    hour's return with a negative coefficient (see run_inference). Returns the
+    forecast price, or None if ARIMA can't fit / too little data.
     """
     try:
         s = (df_upto_hour.set_index('open_time')['close']
@@ -1088,6 +1191,7 @@ def init_v2():
     artifacts are absent, the engine runs exactly as before with only the legacy
     models. This lets the dashboard show legacy vs. v2 (champion/challenger)."""
     global V2_MODEL_DIR
+    v2_calib_load()
     def _has_pth(d):
         return os.path.isdir(d) and any(x.endswith('.pth') for x in os.listdir(d))
     # Backward-compat: primary per-horizon dir empty but root has models (pre-reorg layout).
@@ -1285,13 +1389,39 @@ def run_inference(symbol, db_id):
     # candle at the most recent hour boundary and forecast the NEXT hour boundary. So a
     # run started at 06:23 still forecasts 06:00 -> 07:00, and every 5-min cycle within
     # that hour reproduces the same point (deduped by target time).
+    #
+    # `< hour_anchor`, NOT `<=`, and this is load-bearing (measured 2026-07-30 over 264
+    # matured hourly forecasts per coin). The engine runs 10s past the boundary, so the
+    # candle opening AT hour_anchor is still in progress and holds ~10s of trades. Two
+    # things went wrong when it was included:
+    #
+    #   1. Lookahead. df_anchor's last close was the price ~10s INTO the hour, while
+    #      the dashboard scores direction from the close exactly AT the boundary
+    #      (chart-utils.horizonOffsets -> base = closeAt[t - 3600]). `pred - base` then
+    #      carried ~10s of already-realized movement. Small in absolute terms (~0.008%)
+    #      but ARIMA_v2's own median predicted move is only 0.0155%, so it was a large
+    #      fraction of that model's entire signal.
+    #
+    #   2. A degenerate hourly bar. infer_arima_hourly resamples this frame to 1h, so
+    #      that lone in-progress candle got a bucket of its own and the last "hourly"
+    #      return the ARIMA saw was a 10-SECOND return (~0). With d_t ~ 0 the ARIMA(2,1,0)
+    #      forecast collapses to phi2 * (previous full hour's return), and phi2 measured
+    #      negative on all three coins (-0.036 / -0.081 / -0.048). ARIMA_v2 had therefore
+    #      degenerated into a 1-hour mean-reversion rule: corr(predicted move, previous
+    #      hour's move) = -0.14 / -0.56 / -0.43, against +0.06 / +0.08 / +0.10 for the
+    #      same fit on a clean hourly grid. Its 54-57% directional accuracy was that
+    #      accidental contrarian tilt being paid by a mean-reverting regime, not skill.
+    #
+    # Excluding the bar makes the last candle close exactly ON hour_anchor: the model's
+    # anchor price is then identical to the baseline the dashboard scores against, and
+    # the resampled hourly series is a clean grid of full hours.
     v2_hist_entries = {}      # 5-min-horizon v2 -> shares the legacy history
     v2_60m_entries = {}       # 60-min-horizon models -> the v2 history series
     v2_target_time = None     # hour-aligned target timestamp for the v2 series
     last_time_dt = pd.Timestamp(df_hist['open_time'].iloc[-1])
     hour_anchor = last_time_dt.floor('h')
     hour_key = int(hour_anchor.timestamp())
-    df_anchor = df_hist[df_hist['open_time'] <= hour_anchor]
+    df_anchor = df_hist[df_hist['open_time'] < hour_anchor]
 
     # 7b-i. ARIMA_v2 (1-hour statistical baseline). Fit once per clock hour from the
     # hour anchor and reuse the cached result for the rest of the hour's cycles.
@@ -1340,7 +1470,8 @@ def run_inference(symbol, db_id):
                     if out is None:
                         if len(df_anchor) < 50:
                             continue
-                        out = v2_predict(df_anchor.tail(2000), mdl, scaler, meta)
+                        out = v2_predict(df_anchor.tail(2000), mdl, scaler, meta,
+                                         calib_key=f'{symbol}|{name}', sample_key=hour_key)
                         if not out:
                             continue
                         for k in list(v2_pred_cache):        # drop stale-hour entries
@@ -1351,13 +1482,19 @@ def run_inference(symbol, db_id):
                               f"{hour_anchor.strftime('%H:%M')} -> "
                               f"{(hour_anchor + pd.Timedelta(minutes=out['horizon_min'])).strftime('%H:%M')}")
                 else:
-                    out = v2_predict(df_hist.tail(2000), mdl, scaler, meta)
+                    # 5-min v2 models keep running every cycle off the live frame; the
+                    # candle they are anchored on is the de-bias sample key.
+                    out = v2_predict(df_hist.tail(2000), mdl, scaler, meta,
+                                     calib_key=f'{symbol}|{name}',
+                                     sample_key=int(pd.Timestamp(df_hist['open_time'].iloc[-1]).timestamp()))
                     if not out:
                         continue
                 results["predictions"][name] = {
                     "val": out["val"], "price": out["price"],
                     "change_pct": out["change_pct"], "signal": out["signal"],
                     "horizon_min": out["horizon_min"],
+                    "raw_change_pct": out.get("raw_change_pct"),
+                    "debias_offset_pct": out.get("debias_offset_pct"),
                 }
                 # 5-min models join the legacy series; longer-horizon models go to
                 # prediction_history_v2 at the next hour boundary (hour_anchor + horizon).
@@ -1448,6 +1585,10 @@ def run_inference(symbol, db_id):
             history_cache[db_id]["v2"] = cleaned_v2
     except Exception as e:
         print(f"   -> Failed to update v2 prediction history: {e}")
+
+    # Persist the de-bias state now that this coin's samples are recorded, so a restart
+    # resumes with a warm offset instead of publishing raw predictions for hours.
+    v2_calib_save()
 
     # 8. Add History Aggregation (OHLC format for Candlestick charts with UNIX timestamp in seconds)
     try:

@@ -357,6 +357,39 @@ header {
 .toast.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
 .toast .dot { width: 9px; height: 9px; border-radius: 50%; }
 
+/* 95% Wilson interval under the hit rate. Muted when it spans 50% (the sample
+   cannot separate the model from chance), accented when it clears it. */
+.card-ci {
+    margin-top: 8px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: .04em;
+    cursor: help;
+}
+.card-ci.inconclusive { color: var(--muted-label); }
+.card-ci.beats, .card-ci.below { color: var(--muted); }
+.card-ci.beats::before, .card-ci.below::before {
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 5px;
+    border-radius: 50%;
+    vertical-align: middle;
+}
+/* Above 50% = real edge. Below 50% = reliably wrong, which must not borrow the
+   same marker just because it is also statistically clear. */
+.card-ci.beats::before { background: var(--up); }
+.card-ci.below::before { background: var(--down); }
+/* Marks a card showing the model's last published prediction rather than one from
+   the current cycle. */
+.stale-dot {
+    margin-left: 4px;
+    color: var(--muted-label);
+    cursor: help;
+    font-weight: 700;
+}
+
 .card-footer {
     display: flex;
     justify-content: space-between;
@@ -945,6 +978,110 @@ header {
 .m-value.accent { color: var(--buy); }
 .m-sub { font-size: 10px; color: var(--muted); margin-top: 4px; }
 
+/* ==========================================================================
+   CONCLUSIONS PAGE (conclusions.html)
+   Built entirely from primitives already used by the analytics surfaces
+   (.m-tiles, .a-card, .dot, .chart-empty) so the page inherits the existing
+   look instead of introducing a second visual language.
+   ========================================================================== */
+.conc-error {
+    background: rgba(255, 84, 112, .08);
+    border: 1px solid rgba(255, 84, 112, .3);
+    color: var(--down);
+    border-radius: 12px;
+    padding: 13px 15px;
+    font-size: 13px;
+    margin: 14px 0;
+}
+.c-up { color: var(--up); }
+.c-down { color: var(--down); }
+.c-flat { color: var(--muted); }
+
+/* Model agreement rows */
+.agree-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 1.4fr) 64px minmax(60px, 3fr) 62px;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--card-border);
+}
+.agree-row:last-child { border-bottom: none; }
+.agree-name { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; }
+.agree-dir { font-size: 11px; font-weight: 600; }
+.agree-bar {
+    position: relative;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, .06);
+    overflow: hidden;
+}
+/* Centre line the bars grow away from: right = predicted up, left = predicted down. */
+.agree-bar .mid {
+    position: absolute;
+    left: 50%;
+    top: -2px;
+    bottom: -2px;
+    width: 1px;
+    background: rgba(255, 255, 255, .22);
+}
+.agree-bar .fill {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    border-radius: 3px;
+    transition: width .35s ease;
+}
+.agree-val { font-size: 12px; font-weight: 600; text-align: right; color: var(--muted); }
+
+/* Standings rows */
+.stand-row {
+    display: grid;
+    grid-template-columns: 26px minmax(120px, 2fr) 62px minmax(96px, 1.2fr) 72px;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--card-border);
+}
+.stand-row:last-child { border-bottom: none; }
+.stand-rank { font-size: 11px; font-weight: 600; color: var(--muted-label); }
+.stand-name { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; }
+.stand-da { font-size: 14px; font-weight: 600; }
+.stand-ci { font-size: 10px; color: var(--muted); cursor: help; }
+.stand-ci.inconclusive { color: var(--muted-label); }
+.stand-ci.beats { color: var(--up); }
+.stand-ci.below { color: var(--down); }
+.stand-n { font-size: 10px; color: var(--muted-label); text-align: right; }
+
+/* Live insights */
+.insight-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.insight {
+    position: relative;
+    padding: 9px 12px 9px 30px;
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 1.55;
+    background: rgba(255, 255, 255, .02);
+    border: 1px solid var(--card-border);
+}
+.insight::before {
+    position: absolute;
+    left: 11px;
+    top: 9px;
+    font-size: 11px;
+}
+.insight.good::before { content: '▲'; color: var(--up); }
+.insight.warn::before { content: '!'; color: #f5a524; font-weight: 700; }
+.insight.info::before { content: '•'; color: var(--muted); }
+
+@media (max-width: 640px) {
+    .agree-row { grid-template-columns: 1fr 56px 56px; }
+    .agree-row .agree-bar { grid-column: 1 / -1; }
+    .stand-row { grid-template-columns: 22px 1fr 56px; row-gap: 2px; }
+    .stand-row .stand-ci { grid-column: 2 / -1; }
+    .stand-row .stand-n { grid-column: 2 / -1; text-align: left; }
+}
+
 /* ---- Sections + cards ---- */
 .a-section { margin: 18px 0 8px; }
 .a-section h4 { font-size: 14px; font-weight: 600; margin: 0 0 3px; }
@@ -1061,7 +1198,32 @@ header {
    ANALYTICS PAGE (analytics.html)
    ========================================================================== */
 .cmp-wrap { overflow-x: auto; border: 1px solid var(--card-border); border-radius: 14px; }
-.cmp-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 720px; }
+/* Analytics time-range bar. Reuses .range-seg / .seg-btn / .custom-range from the
+   dashboard so both pages present the same control; only the row wrapper is new. */
+.ana-rangebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 16px 0 4px;
+}
+.ana-rangebar .range-seg { flex-wrap: wrap; }
+.range-note { font-size: 11px; color: var(--muted); }
+.range-err { font-size: 11px; color: var(--down); }
+@media (max-width: 640px) {
+    .ana-rangebar { align-items: flex-start; flex-direction: column; }
+    .ana-rangebar .range-seg { width: 100%; }
+}
+
+/* Wilson interval cell. Dimmed when it spans 50%, i.e. the sample can't tell the
+   model from a coin flip — the accuracy column alone reads more certain than it is. */
+.ci-cell { color: var(--muted); }
+.ci-cell.inconclusive { color: var(--muted-label); }
+.ci-cell.beats { color: var(--up); }
+.ci-cell.below { color: var(--down); }
+
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 800px; }
 .cmp-table th, .cmp-table td { padding: 11px 12px; text-align: right; white-space: nowrap; }
 .cmp-table th {
     position: sticky; top: 0; background: #0b0f16; color: var(--muted);

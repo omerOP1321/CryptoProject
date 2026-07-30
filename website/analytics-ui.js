@@ -363,9 +363,14 @@
             ? (payload.prediction_history_v2 || [])
             : (payload.prediction_history || []);
     }
-    function fullLog(payload, modelName) {
+    /*
+     * opts is forwarded straight to buildPredictionLog, so callers can scope the log to
+     * a time window ({ fromSec, toSec }) without knowing which series the model lives in.
+     * Omitted = the whole retained history, which is what every existing caller expects.
+     */
+    function fullLog(payload, modelName, opts) {
         var hist5m = (payload.history && payload.history['5m']) || [];
-        return CU.buildPredictionLog(predHistFor(payload, modelName), hist5m, modelName);
+        return CU.buildPredictionLog(predHistFor(payload, modelName), hist5m, modelName, opts);
     }
 
     // ------------------------------------------------------ per-model analytics HTML
@@ -390,8 +395,18 @@
 
         // tiles
         var da = cls.accuracy != null ? cls.accuracy * 100 : null;
+        var ci = CU.directionInterval(log);
+        // Put the interval directly under the headline accuracy: a bare "54.4%" reads as
+        // a settled fact, and at these sample sizes the band is usually wider than the
+        // gap between any two models on this dashboard.
+        var daSub = ci.low == null
+            ? 'vs 50% coin-flip'
+            : '95% CI ' + fmt(ci.low, 1) + '–' + fmt(ci.high, 1) + '% · n=' + ci.n +
+              (ci.beatsChance ? ' · clears 50%'
+                 : ci.belowChance ? ' · below 50% — reliably worse than chance'
+                 : ' · spans 50%');
         var tiles = '<div class="m-tiles">' +
-            metricTile('Directional accuracy', fmtPct(da, 1), 'vs 50% coin-flip', true) +
+            metricTile('Directional accuracy', fmtPct(da, 1), daSub, true) +
             metricTile('PT significance', ptBadge, 'better than chance?') +
             metricTile('MAE', fmtPrice(reg.mae), 'avg abs error') +
             metricTile('RMSE', fmtPrice(reg.rmse)) +

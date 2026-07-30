@@ -17,10 +17,59 @@
     let metrics = [];           // per-model computed metrics for the active coin
     let sortKey = 'da', sortDir = -1;
 
+    /* ---------------- time range ----------------
+     * Every metric, chart and table on this page is scored over this window. 'ALL' is
+     * the default so the page opens showing exactly what it always did; the shorter
+     * windows are additive.
+     *
+     * The window ends at the last CANDLE in the payload, not at Date.now(): the engine
+     * publishes every 5 minutes, so anchoring to wall-clock would silently drop the most
+     * recent predictions whenever the page was open between two pushes.
+     */
+    const SPANS = { '24H': 86400, '7D': 7 * 86400, '30D': 30 * 86400 };
+    let activeRange = localStorage.getItem('anaRange') || 'ALL';
+    let customFromSec = null, customToSec = null;
+
+    function dataEndSec() {
+        const h = (payload && payload.history && payload.history['5m']) || [];
+        return h.length ? h[h.length - 1].time + 300 : Math.floor(Date.now() / 1000);
+    }
+    function rangeWindow() {
+        const end = dataEndSec();
+        if (activeRange === 'custom' && customFromSec && customToSec) {
+            return { fromSec: customFromSec, toSec: customToSec };
+        }
+        if (activeRange === 'TODAY') {
+            // Local midnight, not UTC — "Today" has to mean the viewer's today.
+            const d = new Date(end * 1000);
+            d.setHours(0, 0, 0, 0);
+            return { fromSec: Math.floor(d.getTime() / 1000), toSec: end };
+        }
+        const span = SPANS[activeRange];
+        if (!span) return {};                      // ALL — no bounds
+        return { fromSec: end - span, toSec: end };
+    }
+    function rangeLabel() {
+        const w = rangeWindow();
+        if (w.fromSec == null) return 'Full retained history';
+        return AUI.fmtDateTime(w.fromSec) + ' → ' + AUI.fmtDateTime(w.toSec);
+    }
+
     const COLS = [
         { key: 'model', label: 'Model', type: 'model' },
         { key: 'n',     label: 'Matured', higher: true,  fmt: v => v },
         { key: 'da',    label: 'Dir. acc', higher: true, fmt: v => AUI.fmtPct(v, 1), heat: true },
+        // Sampling uncertainty next to the accuracy. Sorted by width (tightest first)
+        // rather than by an endpoint, since neither bound alone ranks meaningfully.
+        { key: 'ciWidth', label: '95% CI', higher: false, sortOnly: true,
+          fmt: (v, r) => r && r.ci && r.ci.low != null
+              ? '<span class="ci-cell ' +
+                (r.ci.beatsChance ? 'beats' : r.ci.belowChance ? 'below' : 'inconclusive') +
+                '" title="' + (r.ci.beatsChance ? 'Entirely above 50% — real edge'
+                    : r.ci.belowChance ? 'Entirely below 50% — reliably worse than chance'
+                    : 'Spans 50% — not distinguishable from chance') + '">' +
+                r.ci.low.toFixed(1) + '–' + r.ci.high.toFixed(1) + '%</span>'
+              : '—' },
         { key: 'p',     label: 'PT p-value', higher: false, fmt: v => v == null ? '—' : v.toFixed(3), heat: true },
         { key: 'mae',   label: 'MAE', higher: false, fmt: v => AUI.fmtPrice(v), heat: true },
         { key: 'rmse',  label: 'RMSE', higher: false, fmt: v => AUI.fmtPrice(v), heat: true },
@@ -32,13 +81,19 @@
 
     function computeAll(p) {
         const out = [];
+        const win = rangeWindow();
         MODELS.order.forEach(m => {
-            if (!(p.predictions && p.predictions[m])) return;
-            const log = AUI.fullLog(p, m);
+            // Gate on MATURED HISTORY, not on payload.predictions[m]. A model whose
+            // inference failed for the current cycle (ARIMA_v2 when the fit doesn't
+            // converge, any v2 model right after a restart) still has a full scored
+            // history, and dropping it here silently removed a whole row from the
+            // comparison table — the model looked deleted rather than momentarily quiet.
+            const log = AUI.fullLog(p, m, win);
             if (!log.length) return;
             const reg = CU.regressionMetrics(log);
             const cls = CU.classificationMetrics(log);
             const pt = CU.pesaranTimmermann(log);
+            const ci = CU.directionInterval(log);
             const sim = CU.tradingSim(log, { barSec: MODELS.isHourly(m) ? 3600 : 300 });
             out.push({
                 model: m, log: log,
@@ -46,6 +101,8 @@
                 da: cls.accuracy != null ? cls.accuracy * 100 : null,
                 p: pt.pValue, mae: reg.mae, rmse: reg.rmse, mase: reg.mase,
                 f1: cls.f1, sharpe: sim.sharpe, cum: sim.cumReturn,
+                ci: ci,
+                ciWidth: ci.low == null ? null : ci.high - ci.low,
                 roll: CU.rollingMetrics(log, 12), equity: sim.equityCurve
             });
         });
@@ -71,7 +128,7 @@
                 return '<td><span class="cmp-model"><span class="dot" style="background:' + MODELS.colors[r.model] + '"></span>' + AUI.esc(MODELS.labelOf(r.model)) + '</span></td>';
             }
             const style = c.heat ? heat(r[c.key], c.key, c.higher) : '';
-            return '<td style="' + style + '">' + c.fmt(r[c.key]) + '</td>';
+            return '<td style="' + style + '">' + c.fmt(r[c.key], r) + '</td>';
         }).join('');
     }
 
@@ -155,15 +212,25 @@
         AUI.attachTooltips(sc); AUI.attachTooltips(rs);
     }
 
+    // The content shell is rebuilt from this template whenever an empty range wiped it,
+    // so switching back to a populated window restores every section instead of leaving
+    // the page stuck on the empty-state message.
+    let contentShell = null;
+
     function renderAll() {
         metrics = computeAll(payload);
+        const content = document.getElementById('content');
+        if (contentShell === null) contentShell = content.innerHTML;
         document.getElementById('loading').style.display = 'none';
-        document.getElementById('content').style.display = 'block';
+        content.style.display = 'block';
+        document.getElementById('range-note').textContent = rangeLabel();
         if (!metrics.length) {
-            document.getElementById('content').innerHTML =
-                '<div class="chart-empty" style="height:200px">No matured predictions yet for ' + activeSym + '.</div>';
+            content.innerHTML =
+                '<div class="chart-empty" style="height:200px">No matured predictions for ' +
+                AUI.esc(activeSym) + ' in this range — try a wider one.</div>';
             return;
         }
+        if (!document.getElementById('cmp-table')) content.innerHTML = contentShell;
         renderTable();
         renderRolling();
         renderEquity();
@@ -200,6 +267,52 @@
         fetchPayload();
     }
     document.querySelectorAll('.coin-tab').forEach(t => t.onclick = () => switchCoin(t));
+
+    // ---------------- range control ----------------
+    function syncRangeUI() {
+        document.querySelectorAll('#range-seg .seg-btn').forEach(b =>
+            b.classList.toggle('active', b.dataset.range === activeRange));
+        document.getElementById('custom-range-inputs').style.display =
+            activeRange === 'custom' ? 'flex' : 'none';
+    }
+    function applyRange(r) {
+        // Selecting "Custom" only opens the inputs; the range changes on Apply, so an
+        // un-filled custom range can never blank the page.
+        if (r === 'custom' && (!customFromSec || !customToSec)) {
+            activeRange = 'custom';
+            syncRangeUI();
+            return;
+        }
+        activeRange = r;
+        localStorage.setItem('anaRange', r);
+        syncRangeUI();
+        if (payload) renderAll();
+    }
+    document.querySelectorAll('#range-seg .seg-btn').forEach(b =>
+        b.addEventListener('click', () => applyRange(b.dataset.range)));
+
+    document.getElementById('custom-apply').addEventListener('click', () => {
+        const err = document.getElementById('custom-err');
+        const from = document.getElementById('custom-from').value;
+        const to = document.getElementById('custom-to').value;
+        if (!from || !to) { err.textContent = 'Pick both a start and an end.'; return; }
+        // datetime-local is local wall time; Date parses it as local, so /1000 is UTC sec.
+        const f = Math.floor(new Date(from).getTime() / 1000);
+        const t = Math.floor(new Date(to).getTime() / 1000);
+        if (!isFinite(f) || !isFinite(t)) { err.textContent = 'Invalid date.'; return; }
+        if (f >= t) { err.textContent = 'Start must be before end.'; return; }
+        err.textContent = '';
+        customFromSec = f; customToSec = t;
+        activeRange = 'custom';
+        localStorage.setItem('anaRange', 'custom');
+        syncRangeUI();
+        if (payload) renderAll();
+    });
+
+    // A stored 'custom' range has no bounds on a fresh load (they aren't persisted), so
+    // fall back to ALL rather than opening on an empty window.
+    if (activeRange === 'custom') activeRange = 'ALL';
+    syncRangeUI();
 
     // Honor ?coin= on load
     const wanted = new URLSearchParams(location.search).get('coin');

@@ -192,7 +192,8 @@
         var lastN = opts.lastN === undefined ? Infinity : opts.lastN;
         var fromSec = opts.fromSec === undefined ? -Infinity : opts.fromSec;
         var toSec = opts.toSec === undefined ? Infinity : opts.toSec;
-        var empty = { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 };
+        var empty = { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0,
+                      dirHits: 0, dirCI: wilsonInterval(0, 0) };
         if (!Array.isArray(predHist) || !Array.isArray(hist5m) || hist5m.length === 0) {
             return empty;
         }
@@ -244,7 +245,12 @@
             avgError: errSum / recent.length,
             errorCount: recent.length,
             dirAccuracy: dirTotal > 0 ? dirHits / dirTotal * 100 : null,
-            dirCount: dirTotal
+            dirCount: dirTotal,
+            // Hit count + its 95% Wilson interval, so every surface reports the same
+            // uncertainty instead of re-deriving a denominator (dirCount, never
+            // errorCount — see wilsonInterval).
+            dirHits: dirHits,
+            dirCI: wilsonInterval(dirHits, dirTotal)
         };
     }
 
@@ -428,6 +434,162 @@
     }
 
     /*
+     * Current market state from the 5-minute candles: trend, realized volatility, and
+     * where that volatility sits against its own recent history.
+     *
+     * Deliberately the SAME conventions regimeBreakdown() uses — 12-candle lookback,
+     * +/-0.1% trend threshold, terciles for the LOW/MED/HIGH volatility split — so the
+     * conclusions page and the analytics regime bars can never label the same hour
+     * differently.
+     *
+     * volPct is the stddev of 5-minute log returns over the window, in percent.
+     * Returns { trend, changePct, vol, volPct, volClass, lastClose, n }.
+     */
+    function marketSnapshot(hist5m, opts) {
+        opts = opts || {};
+        var lookback = opts.trendLookback || 12;
+        var volWindow = opts.volWindow || 12;
+        var histWindow = opts.volHistoryWindow || 288;     // ~1 day of 5-min candles
+        var trendThresh = opts.trendThreshold === undefined ? 0.1 : opts.trendThreshold;
+        var empty = { trend: null, changePct: null, vol: null, volPct: null,
+                      volClass: null, lastClose: null, n: 0 };
+        if (!Array.isArray(hist5m) || hist5m.length < 2) return empty;
+
+        var closes = hist5m.map(function (c) { return c.c; });
+        var n = closes.length;
+        var rets = [];
+        for (var i = 1; i < n; i++) rets.push(closes[i - 1] > 0 ? (closes[i] - closes[i - 1]) / closes[i - 1] : 0);
+
+        function stddev(a) {
+            if (a.length < 2) return 0;
+            var m = a.reduce(function (s, v) { return s + v; }, 0) / a.length;
+            var v = a.reduce(function (s, x) { return s + (x - m) * (x - m); }, 0) / a.length;
+            return Math.sqrt(v);
+        }
+
+        var back = n - 1 - lookback;
+        var trend = 'SIDEWAYS', changePct = null;
+        if (back >= 0 && closes[back] > 0) {
+            changePct = (closes[n - 1] - closes[back]) / closes[back] * 100;
+            if (changePct > trendThresh) trend = 'UP';
+            else if (changePct < -trendThresh) trend = 'DOWN';
+        }
+
+        var vol = stddev(rets.slice(Math.max(0, rets.length - volWindow)));
+        // Rank the current reading against rolling windows over recent history, so
+        // "HIGH" means high FOR THIS COIN RIGHT NOW rather than against a fixed number.
+        var recent = rets.slice(Math.max(0, rets.length - histWindow));
+        var samples = [];
+        for (var j = volWindow; j <= recent.length; j++) samples.push(stddev(recent.slice(j - volWindow, j)));
+        var volClass = null;
+        if (samples.length >= 6) {
+            var sorted = samples.slice().sort(function (a, b) { return a - b; });
+            var q1 = sorted[Math.floor(sorted.length / 3)];
+            var q2 = sorted[Math.floor(sorted.length * 2 / 3)];
+            volClass = vol <= q1 ? 'LOW' : (vol <= q2 ? 'MED' : 'HIGH');
+        }
+        return { trend: trend, changePct: changePct, vol: vol, volPct: vol * 100,
+                 volClass: volClass, lastClose: closes[n - 1], n: n };
+    }
+
+    /*
+     * How much the live predictions agree on direction right now.
+     *
+     * `preds` is payload.predictions; each entry's change_pct is compared against
+     * `flatPct` (default 0.01%) so a model sitting essentially on the current price is
+     * counted as FLAT rather than being forced into a direction by float noise.
+     *
+     * consensus is the share of NON-FLAT models on the majority side, which is the
+     * number worth reading: 8 models split 4/4 is no signal at all.
+     * Returns { up, down, flat, total, directional, majority, consensus, byModel }.
+     */
+    function modelAgreement(preds, models, flatPct) {
+        flatPct = flatPct === undefined ? 0.01 : flatPct;
+        var out = { up: 0, down: 0, flat: 0, total: 0, directional: 0,
+                    majority: null, consensus: null, byModel: {} };
+        if (!preds) return out;
+        (models || Object.keys(preds)).forEach(function (m) {
+            var p = preds[m];
+            if (!p) return;
+            var chg = Number(p.change_pct);
+            if (!isFinite(chg)) return;
+            out.total++;
+            var dir = chg > flatPct ? 'UP' : (chg < -flatPct ? 'DOWN' : 'FLAT');
+            out.byModel[m] = { dir: dir, changePct: chg };
+            if (dir === 'UP') out.up++;
+            else if (dir === 'DOWN') out.down++;
+            else out.flat++;
+        });
+        out.directional = out.up + out.down;
+        if (out.directional > 0) {
+            out.majority = out.up >= out.down ? 'UP' : 'DOWN';
+            out.consensus = Math.max(out.up, out.down) / out.directional * 100;
+        }
+        return out;
+    }
+
+    /*
+     * Wilson score interval for a directional hit-rate — the sampling uncertainty
+     * around a reported accuracy.
+     *
+     * Wilson rather than the textbook normal ("Wald") interval because Wald is wrong
+     * in exactly the cases that matter here: it produces bounds outside 0-100% for
+     * small n or extreme rates, and its coverage is poor below a few hundred samples.
+     * Wilson stays inside [0,1] at every n and is the standard recommendation.
+     *
+     * Reading it: an interval that straddles 50% means the sample cannot distinguish
+     * the model from a coin flip. At n = 264 (about 11 days of hourly forecasts) the
+     * half-width is roughly +/- 6 points, which is wider than the entire spread between
+     * the models on this dashboard - the point of showing it.
+     *
+     * Three distinct verdicts, because "not straddling 50%" is NOT the same as "good":
+     * an interval entirely BELOW 50% is a model reliably worse than a coin flip, which
+     * must never be presented like one that clears it.
+     *   beatsChance  - low  > 50 (skill)
+     *   belowChance  - high < 50 (reliably wrong)
+     *   straddlesChance - spans 50 (indistinguishable from chance)
+     *
+     * hits / n are counts. z defaults to 1.96 (95%). Returns percentages:
+     *   { low, high, point, n, z, straddlesChance, beatsChance, belowChance }
+     * (nulls when n = 0)
+     */
+    function wilsonInterval(hits, n, z) {
+        z = z || 1.96;
+        if (!n || n <= 0 || hits == null) {
+            return { low: null, high: null, point: null, n: 0, z: z,
+                     straddlesChance: true, beatsChance: false, belowChance: false };
+        }
+        var p = hits / n;
+        var d = 1 + z * z / n;
+        var centre = p + z * z / (2 * n);
+        var spread = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n));
+        var low = (centre - spread) / d, high = (centre + spread) / d;
+        if (low < 0) low = 0;
+        if (high > 1) high = 1;
+        var lo = low * 100, hi = high * 100;
+        return {
+            low: lo, high: hi, point: p * 100, n: n, z: z,
+            straddlesChance: lo <= 50 && hi >= 50,
+            beatsChance: lo > 50,
+            belowChance: hi < 50
+        };
+    }
+
+    /*
+     * wilsonInterval straight off a prediction log: counts the scoreable directional
+     * calls (both directions non-FLAT) and their hits, so callers don't re-derive the
+     * denominator and risk using the matured-prediction count instead.
+     */
+    function directionInterval(log, z) {
+        var hits = 0, n = 0;
+        (log || []).forEach(function (r) {
+            if (r.correct === null || r.correct === undefined) return;
+            n++; if (r.correct) hits++;
+        });
+        return wilsonInterval(hits, n, z);
+    }
+
+    /*
      * Bucket a prediction log into nBuckets equal time slices (oldest -> newest)
      * and return per-bucket { dirAcc, mae, n } for rolling-performance charts.
      */
@@ -587,6 +749,10 @@
         regressionMetrics: regressionMetrics,
         classificationMetrics: classificationMetrics,
         pesaranTimmermann: pesaranTimmermann,
+        wilsonInterval: wilsonInterval,
+        directionInterval: directionInterval,
+        marketSnapshot: marketSnapshot,
+        modelAgreement: modelAgreement,
         normalCdf: normalCdf,
         rollingMetrics: rollingMetrics,
         regimeBreakdown: regimeBreakdown,

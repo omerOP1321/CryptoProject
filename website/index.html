@@ -9,10 +9,10 @@
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-client.js?v=13"></script>
-    <script src="chart-utils.js?v=15"></script>
-    <script src="analytics-ui.js?v=14"></script>
-    <script src="auth.js?v=19"></script>
-    <link rel="stylesheet" href="styles.css?v=17">
+    <script src="chart-utils.js?v=17"></script>
+    <script src="analytics-ui.js?v=16"></script>
+    <script src="auth.js?v=20"></script>
+    <link rel="stylesheet" href="styles.css?v=19">
 </head>
 <body>
     <div class="blob b1"></div>
@@ -489,11 +489,37 @@
             // Per-model live + accuracy data for cards and the stats drawer.
             function computeModelInfo(modelName, fromSec, toSec, hist5m, formattedHistory, lastPrice) {
                 const preds = globalPayload.predictions || {};
-                const pd = preds[modelName];
-                if (!pd) return null;
                 const isV2 = isHourlyModel(modelName);
                 const histForModel = isV2 ? (globalPayload.prediction_history_v2 || [])
                                           : (globalPayload.prediction_history || []);
+
+                // A model whose inference failed THIS cycle used to return null here, so
+                // its card vanished from the dashboard and the remaining cards re-ranked
+                // around the hole — it read as "the model was removed" rather than "one
+                // cycle was quiet". Fall back to that model's most recent published
+                // prediction, which is real data, not a placeholder.
+                let pd = preds[modelName];
+                if (!pd) {
+                    let lastEntry = null;
+                    for (let i = histForModel.length - 1; i >= 0; i--) {
+                        const v = Number(histForModel[i][modelName]);
+                        if (Number.isFinite(v)) { lastEntry = { t: histForModel[i].time, v }; break; }
+                    }
+                    if (!lastEntry) return null;
+                    // Baseline for the change % is the close the forecast was made from,
+                    // matching ChartUtils.horizonOffsets; fall back to the live price when
+                    // that candle isn't in the payload window.
+                    const baseTime = isV2 ? lastEntry.t - 3600 : lastEntry.t;
+                    let base = lastPrice;
+                    for (let i = hist5m.length - 1; i >= 0; i--) {
+                        if (hist5m[i].time + 300 === baseTime) { base = hist5m[i].c; break; }
+                    }
+                    pd = {
+                        price: lastEntry.v,
+                        change_pct: base > 0 ? (lastEntry.v - base) / base * 100 : 0,
+                        stale: true
+                    };
+                }
                 const stats = ChartUtils.computeModelStats(histForModel, hist5m, modelName,
                     { fromSec, toSec });
 
@@ -553,15 +579,39 @@
                 const { sig, cls } = signalInfo(info.pd.change_pct);
                 const err = info.stats.avgError !== null ? info.stats.avgError.toFixed(2) + '%' : '—';
                 const dir = info.stats.dirAccuracy !== null ? info.stats.dirAccuracy.toFixed(0) + '%' : '—';
+                // 95% Wilson interval under the hit rate. When it straddles 50% the sample
+                // can't tell the model from a coin flip, so it renders muted rather than
+                // as a confident number — the accuracy alone reads far more certain than
+                // a few hundred calls can support.
+                const ci = info.stats.dirCI;
+                const ciState = !ci || ci.low === null ? null
+                    : ci.beatsChance ? 'beats'
+                    : ci.belowChance ? 'below'      // reliably WORSE than a coin flip
+                    : 'inconclusive';
+                const ciTitle = ciState === 'beats'
+                        ? ' — entirely above 50%, so the edge survives the sample size'
+                    : ciState === 'below'
+                        ? ' — entirely below 50%: this model is reliably worse than a coin flip'
+                        : ' — spans 50%, so not distinguishable from chance';
+                const ciHtml = ciState
+                    ? `<div class="card-ci ${ciState}"
+                            title="95% Wilson confidence interval over ${ci.n} scored directional calls${ciTitle}">
+                        95% CI ${ci.low.toFixed(1)}–${ci.high.toFixed(1)}%
+                       </div>`
+                    : '';
+                const staleHtml = info.pd.stale
+                    ? `<span class="stale-dot" title="No prediction published this cycle — showing this model's most recent one">·</span>`
+                    : '';
                 return `
                     <div class="ring">${buildRing(info.stats.dirAccuracy, color)}</div>
                     <div class="card-top">
                         <span class="rank-badge">${rank}</span>
-                        <span class="model-name"><span class="dot" style="background:${color}"></span> ${labelOf(model)}</span>
+                        <span class="model-name"><span class="dot" style="background:${color}"></span> ${labelOf(model)}${staleHtml}</span>
                     </div>
                     <div class="std-price">${fmtPrice(info.pd.price)}</div>
                     <div class="pred-row">${pctPill(info.pd.change_pct)}<span class="signal ${cls}">${sig}</span></div>
                     ${buildSparkline(info.spark, color)}
+                    ${ciHtml}
                     <div class="card-footer">
                         <div class="foot-stat"><span class="fl">Err</span><span class="fv">${err}</span></div>
                         <div class="foot-stat"><span class="fl">Hit%</span><span class="fv accent">${dir}</span></div>
@@ -659,7 +709,20 @@
                     deltaEl.innerText = '';
                 }
                 const meta = COIN_META[activeCoin] || { name: activeCoin };
-                const nModels = ALL_MODELS.filter(m => (globalPayload.predictions || {})[m]).length;
+                // Count models the dashboard is actually tracking, not just the ones that
+                // reported this cycle — a model with history still has a card (see
+                // computeModelInfo's stale fallback), so gating on predictions[m] alone
+                // made the count disagree with the number of cards on screen.
+                const trackedHist = new Set();
+                [[globalPayload.prediction_history || [], false],
+                 [globalPayload.prediction_history_v2 || [], true]].forEach(([h, v2]) => {
+                    ALL_MODELS.forEach(m => {
+                        if (isHourlyModel(m) !== v2 || trackedHist.has(m)) return;
+                        if (h.some(e => Number.isFinite(Number(e[m])))) trackedHist.add(m);
+                    });
+                });
+                const nModels = ALL_MODELS.filter(
+                    m => (globalPayload.predictions || {})[m] || trackedHist.has(m)).length;
                 document.getElementById('market-note').innerText =
                     `${meta.name} · ${nModels} models · updates every 30s`;
 
@@ -1034,8 +1097,14 @@
                     const s = info[m];
                     totMatured += s.errorCount;
                     if (s.dirAccuracy !== null) {
-                        totCorrect += Math.round(s.dirAccuracy / 100 * s.errorCount);
-                        totDirCount += s.errorCount;
+                        // Weight by dirCount, NOT errorCount. dirAccuracy is a share of
+                        // the predictions that HAD a scoreable direction (baseline present
+                        // and neither move flat); errorCount counts every matured
+                        // prediction, including those. Mixing them inflated the models with
+                        // the most unscoreable rows and made the headline number disagree
+                        // with the per-model bars below it.
+                        totCorrect += Math.round(s.dirAccuracy / 100 * s.dirCount);
+                        totDirCount += s.dirCount;
                         if (s.dirAccuracy > bestDir) { bestDir = s.dirAccuracy; best = m; }
                     }
                     if (s.avgError !== null) {
@@ -1092,7 +1161,10 @@
                     .map(({ m, s }) => {
                         const color = MODEL_COLORS[m];
                         const pct = s.dirAccuracy;
-                        const correct = pct !== null ? Math.round(pct / 100 * s.errorCount) : 0;
+                        // dirCount is the denominator dirAccuracy is a share of; using
+                        // errorCount here printed a "X of N" caption whose ratio did not
+                        // equal the percentage shown right above it.
+                        const correct = pct !== null ? Math.round(pct / 100 * s.dirCount) : 0;
                         const w = pct !== null ? Math.max(0, Math.min(100, pct)) : 0;
                         return { key: m, className: 'hit-row', html: `
                             <div class="hit-top">
@@ -1103,7 +1175,11 @@
                                 <div class="fill" style="width:${w}%;background:${color}"></div>
                                 <div class="mid"></div>
                             </div>
-                            <div class="hit-cap">${correct} of ${s.errorCount} completed calls predicted correctly</div>` };
+                            <div class="hit-cap">${correct} of ${s.dirCount} completed calls predicted correctly${
+                                s.dirCI && s.dirCI.low !== null
+                                    ? ` · 95% CI ${s.dirCI.low.toFixed(1)}–${s.dirCI.high.toFixed(1)}%${
+                                        s.dirCI.straddlesChance ? ' (spans 50% — not separable from chance)' : ''}`
+                                    : ''}</div>` };
                     });
 
                 // Avg error bars, ranked best -> worst (lowest error on top).

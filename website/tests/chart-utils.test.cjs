@@ -11,6 +11,16 @@ const { horizonOffsets } = ChartUtils;
 const { findOutages, formatOutage } = ChartUtils;
 const { buildPredictionLog, regressionMetrics, classificationMetrics, pesaranTimmermann, rollingMetrics, regimeBreakdown, tradingSim } = ChartUtils;
 
+// The zero-sample shape of computeModelStats. Kept in one place: it grew a dirHits
+// count and a dirCI interval when the confidence display was added, and three separate
+// literals would drift apart the next time it changes.
+const EMPTY_STATS = {
+    avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0,
+    dirHits: 0,
+    dirCI: { low: null, high: null, point: null, n: 0, z: 1.96,
+             straddlesChance: true, beatsChance: false, belowChance: false }
+};
+
 // ----------------------------------------------------- recentFocusRange
 
 test('recentFocusRange shows the last focusBars + rightOffset for a long series', () => {
@@ -288,7 +298,7 @@ test('computeModelStats: directional accuracy counts correct calls', () => {
 test('computeModelStats: in-progress target candle is NOT matured', () => {
     // t=1200 == last candle open (in-progress) -> excluded (close not final yet)
     const stats = computeModelStats([{ time: 1200, LSTM: 109 }], statCandles, 'LSTM');
-    assert.deepStrictEqual(stats, { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 });
+    assert.deepStrictEqual(stats, EMPTY_STATS);
 });
 
 test('computeModelStats: error uses the next candle close (t+300) as actual', () => {
@@ -346,10 +356,10 @@ test('computeModelStats: lastN caps the evaluated predictions', () => {
 test('computeModelStats: empty inputs return null metrics', () => {
     assert.deepStrictEqual(
         computeModelStats([], statCandles, 'LSTM'),
-        { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 });
+        EMPTY_STATS);
     assert.deepStrictEqual(
         computeModelStats([{ time: 900, LSTM: 105 }], [], 'LSTM'),
-        { avgError: null, errorCount: 0, dirAccuracy: null, dirCount: 0 });
+        EMPTY_STATS);
 });
 
 // =================================================== EVALUATION METRICS
@@ -618,4 +628,182 @@ test('computeModelStats: legacy models are unaffected by the horizon change', ()
     const s = computeModelStats([{ time: 300, M: 103 }], evalCandles, 'M');
     assert.strictEqual(s.errorCount, 1);
     assert.strictEqual(s.dirAccuracy, 100);         // baseline 100, actual 102, pred 103
+});
+
+// ===================================================================
+// Wilson confidence interval / directionInterval
+// ===================================================================
+const { wilsonInterval, directionInterval, marketSnapshot, modelAgreement } = ChartUtils;
+
+test('wilsonInterval: a coin-flip sample straddles 50%', () => {
+    const ci = wilsonInterval(132, 264);            // exactly 50%
+    assert.strictEqual(ci.point, 50);
+    assert.ok(ci.low < 50 && ci.high > 50);
+    assert.strictEqual(ci.straddlesChance, true);
+});
+
+test('wilsonInterval: n=264 at 56.8% still spans 50% (the ARIMA_v2 case)', () => {
+    // The measured live figure that prompted this work: nominally the best model,
+    // but the interval reaches below chance, so the lead is not established.
+    const ci = wilsonInterval(150, 264);
+    assert.ok(Math.abs(ci.point - 56.8) < 0.2);
+    assert.ok(ci.low < 51, 'lower bound should sit near/below 50 at this n');
+});
+
+test('wilsonInterval: bounds stay inside [0,100] at extremes (where Wald fails)', () => {
+    const perfect = wilsonInterval(10, 10);
+    assert.ok(perfect.high <= 100 && perfect.low > 0, 'no bound above 100%');
+    const none = wilsonInterval(0, 10);
+    assert.ok(none.low >= 0 && none.high < 100, 'no bound below 0%');
+});
+
+test('wilsonInterval: the interval narrows as n grows at a fixed rate', () => {
+    const small = wilsonInterval(55, 100);
+    const big = wilsonInterval(550, 1000);
+    assert.ok((big.high - big.low) < (small.high - small.low));
+});
+
+test('wilsonInterval: n=0 returns nulls rather than NaN', () => {
+    const ci = wilsonInterval(0, 0);
+    assert.strictEqual(ci.low, null);
+    assert.strictEqual(ci.high, null);
+    assert.strictEqual(ci.n, 0);
+});
+
+test('directionInterval counts scoreable calls only, never the matured total', () => {
+    const log = [
+        { correct: true }, { correct: true }, { correct: false },
+        { correct: null },        // FLAT move — no direction to score
+        { correct: undefined }    // missing baseline
+    ];
+    const ci = directionInterval(log);
+    assert.strictEqual(ci.n, 3);
+    assert.ok(Math.abs(ci.point - (2 / 3 * 100)) < 1e-9);
+});
+
+// ===================================================================
+// marketSnapshot
+// ===================================================================
+function ramp(n, start, stepPct) {
+    const out = []; let p = start;
+    for (let i = 0; i < n; i++) { out.push({ time: i * 300, c: p }); p *= (1 + stepPct / 100); }
+    return out;
+}
+
+test('marketSnapshot flags a steady climb as UP', () => {
+    const s = marketSnapshot(ramp(60, 100, 0.05));
+    assert.strictEqual(s.trend, 'UP');
+    assert.ok(s.changePct > 0.1);
+});
+
+test('marketSnapshot flags a steady fall as DOWN', () => {
+    const s = marketSnapshot(ramp(60, 100, -0.05));
+    assert.strictEqual(s.trend, 'DOWN');
+    assert.ok(s.changePct < -0.1);
+});
+
+test('marketSnapshot calls a flat tape SIDEWAYS', () => {
+    const flat = [];
+    for (let i = 0; i < 60; i++) flat.push({ time: i * 300, c: 100 });
+    const s = marketSnapshot(flat);
+    assert.strictEqual(s.trend, 'SIDEWAYS');
+    assert.strictEqual(s.volPct, 0);
+});
+
+test('marketSnapshot: volClass is relative, so a calm tail after a wild run reads LOW', () => {
+    const c = []; let p = 100;
+    for (let i = 0; i < 200; i++) { p *= 1 + ((i % 2 ? 1 : -1) * 0.6) / 100; c.push({ time: i * 300, c: p }); }
+    for (let i = 200; i < 240; i++) { p *= 1.00001; c.push({ time: i * 300, c: p }); }
+    assert.strictEqual(marketSnapshot(c).volClass, 'LOW');
+});
+
+test('marketSnapshot returns an empty shape for too little data', () => {
+    assert.strictEqual(marketSnapshot([]).n, 0);
+    assert.strictEqual(marketSnapshot([{ time: 0, c: 1 }]).trend, null);
+});
+
+// ===================================================================
+// modelAgreement
+// ===================================================================
+test('modelAgreement splits up/down/flat and scores consensus over directional only', () => {
+    const a = modelAgreement({
+        A: { change_pct: 0.5 }, B: { change_pct: 0.2 }, C: { change_pct: 0.4 },
+        D: { change_pct: -0.3 },
+        E: { change_pct: 0.001 }            // inside the flat band
+    }, ['A', 'B', 'C', 'D', 'E']);
+    assert.strictEqual(a.up, 3);
+    assert.strictEqual(a.down, 1);
+    assert.strictEqual(a.flat, 1);
+    assert.strictEqual(a.total, 5);
+    assert.strictEqual(a.directional, 4);
+    assert.strictEqual(a.majority, 'UP');
+    assert.strictEqual(a.consensus, 75);   // 3 of 4 that took a side, NOT 3 of 5
+});
+
+test('modelAgreement: an even split reports 50% consensus', () => {
+    const a = modelAgreement({ A: { change_pct: 1 }, B: { change_pct: -1 } }, ['A', 'B']);
+    assert.strictEqual(a.consensus, 50);
+});
+
+test('modelAgreement: all-flat yields no majority instead of a fake one', () => {
+    const a = modelAgreement({ A: { change_pct: 0 }, B: { change_pct: 0.001 } }, ['A', 'B']);
+    assert.strictEqual(a.directional, 0);
+    assert.strictEqual(a.majority, null);
+    assert.strictEqual(a.consensus, null);
+});
+
+test('modelAgreement skips models with no live prediction', () => {
+    const a = modelAgreement({ A: { change_pct: 1 } }, ['A', 'B', 'C']);
+    assert.strictEqual(a.total, 1);
+    assert.deepStrictEqual(Object.keys(a.byModel), ['A']);
+});
+
+test('modelAgreement tolerates a null predictions object', () => {
+    const a = modelAgreement(null, ['A']);
+    assert.strictEqual(a.total, 0);
+    assert.strictEqual(a.majority, null);
+});
+
+// ===================================================================
+// computeModelStats now carries the interval
+// ===================================================================
+test('computeModelStats exposes dirHits + dirCI consistent with dirCount', () => {
+    const s = computeModelStats([{ time: 6900, M_v2: 117 }], hourCandles, 'M_v2');
+    assert.strictEqual(s.dirHits, 1);
+    assert.strictEqual(s.dirCI.n, s.dirCount);
+    assert.ok(s.dirCI.low >= 0 && s.dirCI.high <= 100);
+});
+
+test('computeModelStats: empty result still returns a usable dirCI', () => {
+    const s = computeModelStats([], hourCandles, 'M_v2');
+    assert.strictEqual(s.dirCount, 0);
+    assert.strictEqual(s.dirCI.low, null);
+});
+
+test('wilsonInterval: an interval entirely BELOW 50% is flagged distinctly, not as "good"', () => {
+    // The live LSTM (1H) case on a short window: 2 of 12 correct. Statistically clear,
+    // but clear in the WRONG direction — it must never share a verdict with a real edge.
+    const ci = wilsonInterval(2, 12);
+    assert.strictEqual(ci.straddlesChance, false);
+    assert.strictEqual(ci.beatsChance, false);
+    assert.strictEqual(ci.belowChance, true);
+    assert.ok(ci.high < 50);
+});
+
+test('wilsonInterval: an interval entirely ABOVE 50% sets beatsChance only', () => {
+    const ci = wilsonInterval(900, 1000);
+    assert.strictEqual(ci.beatsChance, true);
+    assert.strictEqual(ci.belowChance, false);
+    assert.strictEqual(ci.straddlesChance, false);
+});
+
+test('wilsonInterval: the three verdicts are mutually exclusive at every n', () => {
+    for (let n = 1; n <= 60; n++) {
+        for (let h = 0; h <= n; h++) {
+            const ci = wilsonInterval(h, n);
+            const flags = [ci.beatsChance, ci.belowChance, ci.straddlesChance].filter(Boolean);
+            assert.strictEqual(flags.length, 1,
+                `exactly one verdict expected for ${h}/${n}, got ${flags.length}`);
+        }
+    }
 });
